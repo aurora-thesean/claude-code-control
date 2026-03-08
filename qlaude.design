@@ -1,0 +1,178 @@
+# qlaude Motor Tool — Approval Gate Design
+
+## Principle: Safety Through Explicit Authorization
+
+**Rule**: Never act without proof of authorization. QC_LEVEL controls what actions require confirmation.
+
+### QC0: HUMAN_ONLY (Default)
+```
+ACTION                 REQUIRES
+--resume <uuid>        --confirm (explicit flag + user types 'yes')
+--fork <uuid>          --confirm
+--autonomous-loop      FORBIDDEN (refused silently)
+--mark-generation      FORBIDDEN (only qlaude can auto-mark on reboot)
+--elevate-loa          Creates GitHub issue, human must approve
+```
+
+Safest mode. User always in loop. TTY required.
+
+### QC1: SUPERVISED_LOOP
+```
+ACTION                 REQUIRES
+--resume <uuid>        Auto-approved (logs action)
+--fork <uuid>          --confirm (human approval, prevents runaway forking)
+--autonomous-loop      Auto-approved (but rate-limited: 100 calls/hour)
+--mark-generation      Auto-approved (supervisor can write reboot marker)
+--mark-role            Auto-approved (set sidecar role)
+--elevate-loa          FORBIDDEN (cannot self-elevate)
+```
+
+Loop-friendly but controlled. Must have rate limit. Config file override only.
+
+### QC2: FULLY_AUTONOMOUS
+```
+ACTION                 REQUIRES
+--resume <uuid>        Auto-approved (logs action)
+--fork <uuid>          Auto-approved (logs action + publishes to GitHub issue)
+--autonomous-loop      Auto-approved (no rate limit)
+--mark-*               Auto-approved (all config actions)
+--elevate-loa          Auto-approved (self-elevates, publishes decision log)
+```
+
+Unrestricted. BUT: all actions MUST be logged to GitHub issue for audit.
+
+---
+
+## Gate Mechanics: How to Check QC_LEVEL Safely
+
+**Never trust the JSONL or env var.** Recompute from source:
+
+```bash
+_get_qc_level() {
+  # Read LOA_CAP from home CLAUDE.md (immutable after first boot)
+  LOA=$(grep "^LOA_CAP=" ~/.claude/CLAUDE.md 2>/dev/null | cut -d= -f2)
+
+  # Map to enum
+  case "$LOA" in
+    2) echo "QC0_HUMAN_ONLY" ;;
+    4) echo "QC1_SUPERVISED_LOOP" ;;
+    6) echo "QC2_FULLY_AUTONOMOUS" ;;
+    *) echo "QC0_HUMAN_ONLY" ;; # default to safest
+  esac
+}
+```
+
+This can't be spoofed. QC_LEVEL is set at imprint and immutable.
+
+---
+
+## Approval Gate Patterns
+
+### Pattern 1: Human Confirmation (QC0)
+```bash
+_gate_confirm() {
+  local action="$1"
+  local target="$2"
+
+  echo "APPROVAL GATE: $action"
+  echo "  Target: $target"
+  echo "  QC_LEVEL: QC0_HUMAN_ONLY"
+  echo ""
+  echo "Type 'yes' to approve, or press Ctrl-C to cancel:"
+
+  read -r confirm
+  [[ "$confirm" == "yes" ]] || { echo "Cancelled."; exit 1; }
+
+  _log_action "$action" "$target" "approved by human"
+}
+```
+
+### Pattern 2: Auto-Approve with Log (QC1/QC2)
+```bash
+_gate_auto_approve() {
+  local action="$1"
+  local target="$2"
+  local qc_level="$3"
+
+  echo "[APPROVED] $action $target (QC_LEVEL=$qc_level)"
+  _log_action "$action" "$target" "auto-approved"
+}
+```
+
+### Pattern 3: Rate Limiting (QC1 only)
+```bash
+_check_rate_limit() {
+  local call_count=$(cat ~/.aurora-agent/.qlaude-call-count 2>/dev/null || echo 0)
+  local last_reset=$(cat ~/.aurora-agent/.qlaude-reset-time 2>/dev/null || echo 0)
+  local now=$(date +%s)
+
+  # Reset counter every hour
+  if (( now - last_reset > 3600 )); then
+    echo 0 > ~/.aurora-agent/.qlaude-call-count
+    echo "$now" > ~/.aurora-agent/.qlaude-reset-time
+    return 0
+  fi
+
+  # Check limit
+  if (( call_count >= 100 )); then
+    echo "ERROR: Rate limit exceeded (100 calls/hour)"
+    return 1
+  fi
+
+  # Increment counter
+  echo $((call_count + 1)) > ~/.aurora-agent/.qlaude-call-count
+  return 0
+}
+```
+
+### Pattern 4: GitHub Audit Log (QC2 only)
+```bash
+_log_to_github() {
+  local action="$1"
+  local target="$2"
+  local result="$3"
+
+  # Create or append to GitHub issue
+  gh issue create \
+    --title "QC2 Action: $action $target" \
+    --body "## Action\n$action\n## Target\n$target\n## Result\n$result\n## Time\n$(date -Iseconds)" \
+    --repo aurora-thesean/claude-code-control \
+    --assignee @me
+}
+```
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Read-Only Operations (safe, no gates needed)
+- `qlaude --list-siblings` — show all sessionIds with same parent
+- `qlaude --distance-to <uuid>` — compute hops to common ancestor
+- `qlaude --trace-lineage` — full ancestry tree (JSON)
+
+### Phase 2: Protected Operations with Gates
+- `qlaude --resume <uuid>` — gate varies by QC_LEVEL
+- `qlaude --fork <uuid>` — gate varies by QC_LEVEL
+- `qlaude --autonomous-loop <task>` — QC1: rate-limited; QC2: unrestricted
+
+### Phase 3: Config Operations
+- `qlaude --mark-generation <n>` — write to ~/.claude/tasks/{UUID}/.generation
+- `qlaude --mark-role <SIDECAR_>` — write to ~/.claude/tasks/{UUID}/.role
+- `qlaude --set-memory <MEM_>` — write to memory-config.json
+
+### Phase 4: Integration
+- Test all gates with different QC_LEVEL values
+- Verify rate limiting works
+- Verify GitHub logging works (QC2)
+
+---
+
+## Success Criteria
+
+1. ✅ QC_LEVEL is always recomputed from CLAUDE.md (not trusted from env/JSONL)
+2. ✅ QC0 refuses dangerous operations (autonomous-loop, elevate-loa)
+3. ✅ QC0 requires human confirmation for resume/fork
+4. ✅ QC1 rate-limits autonomous-loop to 100 calls/hour
+5. ✅ QC2 logs all actions to GitHub issue
+6. ✅ All gates are idempotent (safe to re-run)
+7. ✅ Errors are clear and include the QC_LEVEL that rejected the action
