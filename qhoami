@@ -378,10 +378,14 @@ _sense_qc_level() {
   local source_note="interactive terminal (HEURISTIC_FALLBACK)"
 
   if [[ -n "$loa_cap" ]]; then
+    # Map LOA_CAP (Sheridan-Verplank scale: 0-10) to QC_LEVEL enums
+    # LOA 2 (suggest, not act) → QC0_HUMAN_ONLY
+    # LOA 4 (designed actions) → QC1_SUPERVISED
+    # LOA 6 (imprinted autonomy) → QC2_FULLY_AUTONOMOUS
     case "$loa_cap" in
-      0) qc_val="QC0_HUMAN_ONLY" ;;
-      1) qc_val="QC1_SUPERVISED" ;;
-      2) qc_val="QC2_FULLY_AUTONOMOUS" ;;
+      2) qc_val="QC0_HUMAN_ONLY" ;;
+      4) qc_val="QC1_SUPERVISED" ;;
+      6) qc_val="QC2_FULLY_AUTONOMOUS" ;;
       *) qc_val="QC_UNKNOWN" ;;
     esac
     source_type="CONFIG"
