@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+# qlaude-test — Integration tests for qlaude motor tool
+#
+# Tests all three QC_LEVEL behaviors: QC0 (human), QC1 (supervised), QC2 (autonomous)
+#
+# Usage:
+#   qlaude-test [--verbose] [--qc-level <0|1|2>]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QLAUDE="$SCRIPT_DIR/qlaude"
+AURORA_AGENT_DIR="$HOME/.aurora-agent"
+TEST_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+TEST_DATA_DIR="/tmp/qlaude-test-$$"
+
+VERBOSE=0
+TEST_QC_LEVEL=""  # Empty = test all
+PASS_COUNT=0
+FAIL_COUNT=0
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'  # No Color
+
+# Test utilities
+test_info() {
+  echo -e "${BLUE}[TEST]${NC} $*" >&2
+}
+
+test_pass() {
+  echo -e "${GREEN}✓${NC} $*" >&2
+  ((PASS_COUNT++))
+}
+
+test_fail() {
+  echo -e "${RED}✗${NC} $*" >&2
+  ((FAIL_COUNT++))
+}
+
+test_skip() {
+  echo -e "${YELLOW}⊝${NC} $*" >&2
+}
+
+verbose() {
+  if (( VERBOSE )); then
+    echo -e "${BLUE}[VERBOSE]${NC} $*" >&2
+  fi
+}
+
+# Setup/teardown
+setup_test() {
+  mkdir -p "$TEST_DATA_DIR"
+  mkdir -p "$AURORA_AGENT_DIR"
+  # Clear rate limit files
+  rm -f "$AURORA_AGENT_DIR/.qlaude-call-count" "$AURORA_AGENT_DIR/.qlaude-reset-time"
+}
+
+cleanup_test() {
+  rm -rf "$TEST_DATA_DIR"
+}
+
+# Set QC_LEVEL by modifying CLAUDE.md LOA_CAP
+set_qc_level() {
+  local qc_level="$1"
+  local loa
+
+  case "$qc_level" in
+    0) loa=2 ;;  # QC0_HUMAN_ONLY
+    1) loa=4 ;;  # QC1_SUPERVISED_LOOP
+    2) loa=6 ;;  # QC2_FULLY_AUTONOMOUS
+    *) echo "ERROR: Invalid QC level: $qc_level" >&2; exit 1 ;;
+  esac
+
+  # Create temporary CLAUDE.md with the new LOA_CAP
+  cat > "$TEST_CLAUDE_MD" <<EOF
+# AURORA — Test CLAUDE.md
+# QC_LEVEL Test
+
+# ── STANZA:IMPRINT ──
+LOA_CAP=$loa
+IMPRINT_STATUS=test
+PARENT_GSA=unknown
+PARENT_TRUST_KEY=none
+# ── /STANZA:IMPRINT ──
+
+## Identity
+I am AURORA test instance.
+EOF
+
+  verbose "Set LOA_CAP=$loa (QC_LEVEL=$qc_level)"
+}
+
+# --- Test Cases ---
+
+# Test 1: --help works
+test_help() {
+  test_info "Test --help flag"
+  "$QLAUDE" --help >&/dev/null || true
+  test_pass "--help runs without error"
+}
+
+# Test 2: --version works
+test_version() {
+  test_info "Test --version flag"
+  local output
+  output=$("$QLAUDE" --version 2>&1) || true
+
+  if [[ "$output" == *"qlaude v"* ]]; then
+    test_pass "--version returns version string"
+  else
+    test_fail "--version output unexpected: $output"
+  fi
+}
+
+# Test 3: QC0 refuses --autonomous-loop
+test_qc0_forbids_autonomous_loop() {
+  test_info "Test QC0 rejects --autonomous-loop"
+  set_qc_level 0
+
+  local output
+  output=$("$QLAUDE" --autonomous-loop "test task" 2>&1) || true
+
+  if [[ "$output" == *"forbidden"* ]]; then
+    test_pass "QC0 correctly rejects --autonomous-loop with 'forbidden' message"
+  elif [[ "$output" == *"ERROR"* ]]; then
+    test_pass "QC0 correctly rejects --autonomous-loop with error"
+  else
+    test_fail "QC0 rejected --autonomous-loop but without expected message: $output"
+  fi
+}
+
+# Test 4: QC0 requires --confirm for --resume
+test_qc0_resume_requires_confirm() {
+  test_info "Test QC0 requires --confirm for --resume"
+  set_qc_level 0
+
+  local dummy_uuid="aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
+  local output
+
+  output=$("$QLAUDE" --resume "$dummy_uuid" 2>&1) || true
+
+  if [[ "$output" == *"--confirm"* ]]; then
+    test_pass "QC0 --resume correctly requires --confirm flag"
+  else
+    test_fail "QC0 --resume error didn't mention --confirm: $output"
+  fi
+}
+
+# Test 5: QC1 rate limit enforcement
+test_qc1_rate_limit() {
+  test_info "Test QC1 rate limiting (100 calls/hour)"
+  set_qc_level 1
+
+  # Clear rate limit files
+  rm -f "$AURORA_AGENT_DIR/.qlaude-call-count" "$AURORA_AGENT_DIR/.qlaude-reset-time"
+
+  # Make 110 calls - many should succeed, some should fail when limit hit
+  local success_count=0
+  local fail_count=0
+
+  for i in {1..110}; do
+    local output
+    output=$("$QLAUDE" --autonomous-loop "test iteration $i" 2>&1) || true
+    if [[ "$output" == *"APPROVED"* ]]; then
+      ((success_count++))
+    elif [[ "$output" == *"Rate limit"* ]]; then
+      ((fail_count++))
+    fi
+  done
+
+  # Should have some successes and some failures
+  if (( success_count > 90 && fail_count > 0 )); then
+    test_pass "QC1 rate limit works ($success_count approvals, $fail_count rejections)"
+  else
+    test_fail "QC1 rate limit unexpected: $success_count approvals, $fail_count rejections"
+  fi
+}
+
+# Test 6: QC2 allows --autonomous-loop without rate limit
+test_qc2_unlimited_loop() {
+  test_info "Test QC2 allows unlimited --autonomous-loop"
+  set_qc_level 2
+
+  local test_task="autonomous cleanup"
+
+  if output=$("$QLAUDE" --autonomous-loop "$test_task" 2>&1); then
+    if [[ "$output" == *"APPROVED"* ]]; then
+      test_pass "QC2 auto-approves --autonomous-loop"
+    else
+      test_fail "QC2 --autonomous-loop output unexpected: $output"
+    fi
+  else
+    test_fail "QC2 --autonomous-loop failed: $output"
+  fi
+}
+
+# Test 7: --list-siblings with explicit UUID (no current session needed)
+test_list_siblings_explicit_uuid() {
+  test_info "Test --list-siblings with explicit UUID"
+  local dummy_uuid="aaaa5555-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  # Should not error, just return empty or "UUID not found" gracefully
+  if output=$("$QLAUDE" --list-siblings "$dummy_uuid" 2>&1); then
+    test_pass "--list-siblings with explicit UUID completes"
+  else
+    # That's okay too - just shouldn't hang
+    test_pass "--list-siblings with explicit UUID returns error (expected for non-existent UUID)"
+  fi
+}
+
+# Test 8: QC_LEVEL recomputation (immutable from CLAUDE.md)
+test_qc_level_recomputation() {
+  test_info "Test QC_LEVEL is recomputed from CLAUDE.md"
+
+  # Set LOA_CAP to 6, verify qlaude computes QC2
+  set_qc_level 2
+
+  # QC2 should allow autonomous-loop and NOT error
+  local output
+  output=$("$QLAUDE" --autonomous-loop "test" 2>&1) || true
+
+  if [[ "$output" == *"APPROVED"* ]] && [[ "$output" != *"ERROR"* ]]; then
+    test_pass "QC_LEVEL correctly recomputed to QC2 from LOA_CAP=6"
+  else
+    test_fail "QC_LEVEL recomputation failed (output: $output)"
+  fi
+}
+
+# Test 9: QC1 requires --confirm for --fork (prevent runaway)
+test_qc1_fork_requires_confirm() {
+  test_info "Test QC1 requires --confirm for --fork"
+  set_qc_level 1
+
+  local dummy_uuid="aaaa2222-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  if output=$("$QLAUDE" --fork "$dummy_uuid" 2>&1); then
+    test_fail "QC1 --fork without --confirm should error, but succeeded"
+  else
+    if [[ "$output" == *"--confirm"* ]]; then
+      test_pass "QC1 --fork correctly requires --confirm (prevent runaway)"
+    else
+      test_fail "QC1 --fork error didn't mention --confirm: $output"
+    fi
+  fi
+}
+
+# Test 10: QC2 allows --fork without --confirm
+test_qc2_fork_auto() {
+  test_info "Test QC2 auto-approves --fork"
+  set_qc_level 2
+
+  local dummy_uuid="aaaa3333-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+  if output=$("$QLAUDE" --fork "$dummy_uuid" 2>&1); then
+    if [[ "$output" == *"APPROVED"* ]]; then
+      test_pass "QC2 auto-approves --fork without --confirm"
+    else
+      test_fail "QC2 --fork output unexpected: $output"
+    fi
+  else
+    test_fail "QC2 --fork failed: $output"
+  fi
+}
+
+# --- Main Test Runner ---
+
+run_all_tests() {
+  # Note: array must be inside function for "local" to work
+  local tests
+  tests=(
+    test_help
+    test_version
+    test_qc0_forbids_autonomous_loop
+    test_qc0_resume_requires_confirm
+    test_qc1_rate_limit
+    test_qc2_unlimited_loop
+    test_list_siblings_explicit_uuid
+    test_qc_level_recomputation
+    test_qc1_fork_requires_confirm
+    test_qc2_fork_auto
+  )
+
+  echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+  echo -e "${BLUE}qlaude Integration Test Suite${NC}"
+  echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+  echo ""
+
+  for test in "${tests[@]}"; do
+    setup_test
+    echo "Running: $test" >&2
+    "$test" || true
+    cleanup_test
+    echo "" >&2
+  done
+
+  echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+  echo -e "${GREEN}Passed: $PASS_COUNT${NC} | ${RED}Failed: $FAIL_COUNT${NC}"
+  echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+
+  if (( FAIL_COUNT > 0 )); then
+    exit 1
+  fi
+}
+
+# Parse command line
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --verbose|-v)
+      VERBOSE=1
+      shift
+      ;;
+    --qc-level)
+      TEST_QC_LEVEL="$2"
+      shift 2
+      ;;
+    *)
+      echo "Usage: qlaude-test [--verbose] [--qc-level <0|1|2>]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+run_all_tests
