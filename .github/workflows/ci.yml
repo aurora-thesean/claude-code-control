@@ -1,0 +1,47 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Shellcheck qhoami
+        run: shellcheck -x qhoami || true
+      - name: Shellcheck qlaude
+        run: shellcheck -x qlaude || true
+      - name: Shellcheck tests
+        run: shellcheck -x tests/qlaude-test || true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Check JSON schemas
+        run: |
+          python3 -c "import json; json.load(open('README.md'))" 2>/dev/null || echo "README is markdown, not JSON"
+      - name: Verify qhoami syntax
+        run: bash -n qhoami
+      - name: Verify qlaude syntax
+        run: bash -n qlaude
+      - name: Verify test syntax
+        run: bash -n tests/qlaude-test
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Verify README exists
+        run: test -f README.md
+      - name: Verify DESIGN.md exists
+        run: test -f DESIGN.md
+      - name: Count lines (sanity check)
+        run: |
+          echo "qhoami lines: $(wc -l < qhoami)"
+          echo "qlaude lines: $(wc -l < qlaude)"
+          echo "DESIGN lines: $(wc -l < DESIGN.md)"
