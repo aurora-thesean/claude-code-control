@@ -329,29 +329,41 @@ with open('$jsonl') as f:
 _sense_model() {
   local uuid="$1"
 
-  # Config override: instance-config.json or ANTHROPIC_MODEL env
-  local config_model=""
-  if [[ -f "$HOME/.aurora-agent/instance-config.json" ]]; then
-    config_model=$(python3 -c "
+  # Ground truth: Read model from session JSONL message.model field
+  if [[ -n "$uuid" ]]; then
+    local jsonl_file
+    jsonl_file=$(find "$HOME/.claude/projects" -name "${uuid}.jsonl" -type f 2>/dev/null | head -1)
+
+    if [[ -n "$jsonl_file" ]]; then
+      local model
+      model=$(JSONL_FILE="$jsonl_file" python3 << 'PYSCRIPT'
 import json
+import os
+
+jsonl_file = os.environ['JSONL_FILE']
 try:
-    with open('$HOME/.aurora-agent/instance-config.json') as f:
-        cfg = json.load(f)
-        print(cfg.get('model', ''))
-except: pass
-" 2>/dev/null)
+    with open(jsonl_file) as f:
+        for line in f:
+            record = json.loads(line)
+            # Look for message.model field in records
+            if 'message' in record and isinstance(record['message'], dict):
+                if 'model' in record['message']:
+                    print(record['message']['model'])
+                    break
+except:
+    pass
+PYSCRIPT
+      )
+
+      if [[ -n "$model" ]]; then
+        echo "$model|GROUND_TRUTH|Session JSONL message.model field"
+        return
+      fi
+    fi
   fi
 
-  if [[ -n "$config_model" ]]; then
-    echo "$config_model|CONFIG|$HOME/.aurora-agent/instance-config.json"
-    return
-  fi
-
-  # Ground truth: ANTHROPIC_MODEL environment variable (if available in process env)
-  # Note: can't reliably read from /proc/{PID}/environ without access
-  # For now, default to UNKNOWN
-
-  echo "MODEL_UNKNOWN|HEURISTIC_FALLBACK|Could not determine model from config or env"
+  # Fallback: Unable to determine from session logs
+  echo "MODEL_UNKNOWN|HEURISTIC_FALLBACK|Could not find model in session JSONL"
 }
 
 _sense_qc_level() {
