@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# qtask-consumer — Autonomous task queue consumer
+# Picks up tasks from ~/.aurora-agent/queue/, executes them, archives results
+
+set -uo pipefail  # Remove 'e' flag; use explicit error handling instead
+
+QUEUE_DIR="${HOME:?}/.aurora-agent/queue"
+MAX_ITERATIONS="${1:-100}"
+
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly NC='\033[0m'
+
+_log() {
+  echo "[qtask-consumer] $*" >&2
+}
+
+_error() {
+  echo -e "${RED}ERROR: $*${NC}" >&2
+}
+
+_success() {
+  echo -e "${GREEN}✓ $*${NC}" >&2
+}
+
+# Check QC_LEVEL to verify this task consumer is authorized
+_check_authorization() {
+  local loa_cap
+  loa_cap=$(grep "^LOA_CAP=" ~/.claude/CLAUDE.md 2>/dev/null | cut -d= -f2) || {
+    _error "Could not read LOA_CAP from ~/.claude/CLAUDE.md"
+    return 1
+  }
+
+  # QC0 is forbidden from autonomous loops
+  if [[ "$loa_cap" == "2" ]]; then
+    _error "QC0_HUMAN_ONLY: Cannot run autonomous task consumer"
+    return 1
+  fi
+
+  _log "Authorized: LOA_CAP=$loa_cap (QC1+ allowed)"
+}
+
+# Claim a task file atomically (move to .in_progress)
+_claim_task() {
+  local task_file="$1"
+  local claimed_file="${task_file%.task}.in_progress"
+
+  if mv "$task_file" "$claimed_file" 2>/dev/null; then
+    echo "$claimed_file"
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Execute a task and return result
+_execute_task() {
+  local task_json="$1"
+  local task_id action
+
+  task_id=$(python3 -c "import json, sys; print(json.load(open('$task_json'))['task_id'])" 2>/dev/null) || {
+    echo "error: invalid json"
+    return 1
+  }
+
+  action=$(python3 -c "import json, sys; print(json.load(open('$task_json'))['action'])" 2>/dev/null) || {
+    echo "error: no action field"
+    return 1
+  }
+
+  case "$action" in
+    list_sessions)
+      qhoami --all
+      return 0
+      ;;
+    show_identity)
+      qhoami --self
+      return 0
+      ;;
+    *)
+      echo "error: unknown action $action"
+      return 1
+      ;;
+  esac
+}
+
+# Archive completed task
+_archive_task() {
+  local task_file="$1"
+  local status="${2:-completed}"  # completed or failed
+  local result="${3:-}"
+
+  local archive_file="${task_file%.in_progress}.$status"
+
+  # Update result in JSON
+  if [[ -n "$result" ]]; then
+    python3 << EOF
+import json
+from datetime import datetime
+with open('$task_file') as f:
+  data = json.load(f)
+data['result'] = '''$result'''
+data['status'] = '$status'
+data['completed_at'] = datetime.utcnow().isoformat() + 'Z'
+with open('$archive_file', 'w') as f:
+  json.dump(data, f, indent=2)
+EOF
+  else
+    mv "$task_file" "$archive_file"
+  fi
+
+  rm -f "$task_file"
+}
+
+# Main loop
+main() {
+  _check_authorization || exit 1
+
+  mkdir -p "$QUEUE_DIR"
+
+  local iteration=0
+  local tasks_run=0
+  local tasks_failed=0
+
+  _log "Starting main loop: MAX_ITERATIONS=$MAX_ITERATIONS, QUEUE_DIR=$QUEUE_DIR"
+  echo "[TRACE] MAIN_LOOP_START PID=$$ at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+
+  while (( iteration < MAX_ITERATIONS )); do
+    ((iteration++))
+    echo "[TRACE] LOOP_ITERATION_$iteration at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+    _log "Iteration $iteration/$MAX_ITERATIONS"
+
+    # Find pending tasks (use glob directly, not ls)
+    echo "[TRACE] BEFORE_GLOB at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+    local pending_tasks
+    shopt -s nullglob
+    pending_tasks=("$QUEUE_DIR"/*.task)
+    shopt -u nullglob
+    echo "[TRACE] AFTER_GLOB found ${#pending_tasks[@]} tasks at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+    _log "Found ${#pending_tasks[@]} pending tasks in $QUEUE_DIR"
+
+    if [[ ${#pending_tasks[@]} -eq 0 ]]; then
+      echo "[TRACE] NO_TASKS_SLEEPING at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+      _log "No pending tasks. Iteration $iteration/$MAX_ITERATIONS, sleeping 5s..."
+      sleep 5
+      echo "[TRACE] WOKE_UP_FROM_SLEEP at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+      continue
+    fi
+
+    # Process first pending task
+    local task_file="${pending_tasks[0]}"
+    _log "Processing task: $(basename "$task_file")"
+
+    # Claim it
+    local claimed=$(_claim_task "$task_file") || {
+      _error "Failed to claim $(basename "$task_file")"
+      ((tasks_failed++))
+      continue
+    }
+
+    # Execute it
+    local result
+    result=$(_execute_task "$claimed" 2>&1) || {
+      _error "Task failed: $result"
+      _archive_task "$claimed" "failed" "$result"
+      ((tasks_failed++))
+      continue
+    }
+
+    # Archive success
+    _archive_task "$claimed" "completed" "$result"
+    _success "Task completed: $(basename "$claimed")"
+    ((tasks_run++))
+  done
+
+  _log "Loop exited after $iteration iterations ($tasks_run completed, $tasks_failed failed)"
+}
+
+main
