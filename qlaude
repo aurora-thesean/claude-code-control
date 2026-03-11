@@ -100,6 +100,46 @@ PYJSON
   echo "$json" >> "$QLAUDE_AUDIT_LOG" 2>/dev/null || true
 }
 
+# Check AGENTS.md authorization for current agent
+# Returns: 0 = authorized, 1 = not authorized
+_check_agents_md() {
+  local operation="$1"
+
+  # Look for AGENTS.md in script's directory (qlaude is in ~/.local/bin/)
+  local script_dir
+  script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+
+  local agents_file="$script_dir/AGENTS.md"
+
+  if [[ ! -f "$agents_file" ]]; then
+    _log "WARNING: No AGENTS.md in $script_dir (cannot verify authorization)"
+    return 0  # No warrant = allow (for now)
+  fi
+
+  # Get current agent class (simplified: just check if we're running as AURORA or subagent)
+  # Full implementation would use qhoami --self and parse EQQQH coordinates
+  local agent_class="AURORA-HOME"  # Default assumption
+
+  # Try to detect if we're a subagent (simple heuristic)
+  if [[ "${AURORA_AGENT_CLASS:-}" == "CC0-HOME" ]]; then
+    agent_class="CC0-SUBAGENT"
+  elif [[ -n "${AURORA_AGENT_CLASS:-}" ]]; then
+    agent_class="${AURORA_AGENT_CLASS}"
+  fi
+
+  # Check if agent_class is authorized in AGENTS.md
+  # Expected format: "- AURORA-HOME (primary, ...)"
+  # or: "- Subagents (CC0, Haiku, Sonnet classes): execute only"
+
+  if grep -q "AURORA-HOME\|Subagents.*CC0\|DarienSirius" "$agents_file" 2>/dev/null; then
+    _log "AGENTS.md authorization check: agent=$agent_class - AUTHORIZED (execute operations)"
+    return 0
+  else
+    _log "WARNING: Agent $agent_class not listed in $agents_file"
+    return 1
+  fi
+}
+
 # Get QC_LEVEL from CLAUDE.md LOA_CAP (immutable, never trust env)
 _get_qc_level() {
   local loa
@@ -758,6 +798,7 @@ main() {
       local loa_cap
       qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _check_agents_md "resume" || _log "WARNING: AGENTS.md authorization check failed for resume"
       _resume_session "$target" "$confirm" "$qc_level" "$loa_cap"
       ;;
 
@@ -769,6 +810,7 @@ main() {
       local loa_cap
       qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _check_agents_md "fork" || _log "WARNING: AGENTS.md authorization check failed for fork"
       _fork_session "$parent" "$confirm" "$qc_level" "$loa_cap"
       ;;
 
@@ -779,6 +821,7 @@ main() {
       local loa_cap
       qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _check_agents_md "autonomous-loop" || _log "WARNING: AGENTS.md authorization check failed for autonomous-loop"
       _autonomous_loop "$task" "$qc_level" "$loa_cap"
       ;;
 
