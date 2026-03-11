@@ -341,15 +341,17 @@ import json
 import os
 
 jsonl_file = os.environ['JSONL_FILE']
+last_model = None
 try:
     with open(jsonl_file) as f:
         for line in f:
             record = json.loads(line)
-            # Look for message.model field in records
+            # Look for message.model field in records - keep scanning to get LATEST
             if 'message' in record and isinstance(record['message'], dict):
                 if 'model' in record['message']:
-                    print(record['message']['model'])
-                    break
+                    last_model = record['message']['model']
+    if last_model:
+        print(last_model)
 except:
     pass
 PYSCRIPT
