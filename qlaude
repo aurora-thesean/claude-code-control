@@ -44,6 +44,9 @@ readonly RATE_LIMIT_WINDOW_SECS=3600
 QLAUDE_CALL_COUNT_FILE="$AURORA_AGENT_DIR/.qlaude-call-count"
 QLAUDE_RESET_TIME_FILE="$AURORA_AGENT_DIR/.qlaude-reset-time"
 
+# Audit log file
+QLAUDE_AUDIT_LOG="$AURORA_AGENT_DIR/.qlaude-audit.jsonl"
+
 # --- Utility Functions ---
 
 _log() {
@@ -57,6 +60,44 @@ _error() {
 
 _ensure_aurora_agent_dir() {
   mkdir -p "$AURORA_AGENT_DIR" 2>/dev/null || true
+}
+
+# Write audit log entry (JSONL format)
+_audit_log() {
+  local action="$1"
+  local target="$2"
+  local decision="$3"
+  local qc_level="$4"
+  local loa_cap="$5"
+  local reason="${6:-}"
+
+  _ensure_aurora_agent_dir
+
+  # Build JSON object using environment variables to avoid arg passing issues
+  local json
+  json=$(AUDIT_ACTION="$action" AUDIT_TARGET="$target" AUDIT_DECISION="$decision" \
+         AUDIT_QC_LEVEL="$qc_level" AUDIT_LOA_CAP="$loa_cap" AUDIT_REASON="$reason" \
+         python3 << 'PYJSON'
+import json
+import os
+from datetime import datetime, timezone
+
+entry = {
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "action": os.environ.get("AUDIT_ACTION", ""),
+    "target": os.environ.get("AUDIT_TARGET", ""),
+    "decision": os.environ.get("AUDIT_DECISION", ""),
+    "qc_level": os.environ.get("AUDIT_QC_LEVEL", ""),
+    "loa_cap": int(os.environ.get("AUDIT_LOA_CAP", "0")),
+    "reason": os.environ.get("AUDIT_REASON", "")
+}
+
+print(json.dumps(entry))
+PYJSON
+  )
+
+  # Append to audit log atomically
+  echo "$json" >> "$QLAUDE_AUDIT_LOG" 2>/dev/null || true
 }
 
 # Get QC_LEVEL from CLAUDE.md LOA_CAP (immutable, never trust env)
@@ -96,6 +137,8 @@ _qc_level_name() {
 _gate_confirm() {
   local action="$1"
   local target="${2:-}"
+  local qc_level="${3:-0}"
+  local loa_cap="${4:-2}"
 
   echo ""
   echo "╔════════════════════════════════════════════════════════════╗"
@@ -111,12 +154,18 @@ _gate_confirm() {
   echo ""
 
   local confirm
-  read -r confirm || { echo ""; _error "Cancelled by user"; }
+  read -r confirm || {
+    echo ""
+    _audit_log "$action" "$target" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "User cancelled (Ctrl-C)"
+    _error "Cancelled by user"
+  }
 
   if [[ "$confirm" != "yes" ]]; then
+    _audit_log "$action" "$target" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "User denied confirmation (expected 'yes', got '$confirm')"
     _error "Cancelled by user (expected 'yes', got '$confirm')"
   fi
 
+  _audit_log "$action" "$target" "APPROVED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Human confirmation provided"
   _log "$action approved by human"
 }
 
@@ -125,7 +174,26 @@ _gate_auto_approve() {
   local action="$1"
   local target="${2:-}"
   local qc_level="$3"
+  local loa_cap="${4:-}"
 
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
+
+  local reason=""
+  case "$qc_level" in
+    1) reason="Auto-approved: QC1_SUPERVISED_LOOP (rate-limited)" ;;
+    2) reason="Auto-approved: QC2_FULLY_AUTONOMOUS" ;;
+    *) reason="Auto-approved" ;;
+  esac
+
+  _audit_log "$action" "$target" "APPROVED" "$(_qc_level_name "$qc_level")" "$loa_cap" "$reason"
   _log "[APPROVED] $action $([ -n "$target" ] && echo "$target" || echo "")(QC=$(_qc_level_name "$qc_level"))"
 }
 
@@ -421,31 +489,63 @@ _resume_session() {
   local target_uuid="$1"
   local confirm_flag="${2:-}"
   local qc_level="$3"
+  local loa_cap="${4:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
 
   case "$qc_level" in
     "$QC0_HUMAN_ONLY")
       # QC0: require explicit --confirm flag
       if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "resume" "$target_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC0 requires it)"
         _error "--resume requires --confirm flag in QC0_HUMAN_ONLY mode"
       fi
-      _gate_confirm "resume" "$target_uuid"
+      _gate_confirm "resume" "$target_uuid" "$qc_level" "$loa_cap"
       ;;
 
     "$QC1_SUPERVISED_LOOP")
       # QC1: auto-approve with rate limit check
-      _check_rate_limit
-      _gate_auto_approve "resume" "$target_uuid" "$qc_level"
+      if ! _check_rate_limit; then
+        _audit_log "resume" "$target_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Rate limit exceeded (100/hour)"
+        _error "Rate limit exceeded (100 calls/hour, QC_LEVEL=QC1_SUPERVISED_LOOP)"
+      fi
+      _gate_auto_approve "resume" "$target_uuid" "$qc_level" "$loa_cap"
       ;;
 
     "$QC2_FULLY_AUTONOMOUS")
       # QC2: auto-approve and log to GitHub
-      _gate_auto_approve "resume" "$target_uuid" "$qc_level"
+      _gate_auto_approve "resume" "$target_uuid" "$qc_level" "$loa_cap"
       _log_to_github "resume" "$target_uuid" "Resumed session automatically"
       ;;
   esac
 
   _log "Resume session: $target_uuid"
-  # TODO: Actual resume implementation (spawn child session, etc.)
+
+  # Actual resume implementation
+  local tasks_dir="$TASKS_DIR/$target_uuid"
+  if [[ ! -d "$tasks_dir" ]]; then
+    _error "Session directory not found: $tasks_dir"
+  fi
+
+  # Read session role if available
+  local role=""
+  if [[ -f "$tasks_dir/.role" ]]; then
+    role=$(cat "$tasks_dir/.role")
+    _log "Session role: $role"
+  fi
+
+  # Spawn new Claude Code process resuming this session
+  # Note: This creates a new process; parent session remains suspended
+  export AURORA_AGENT_CLASS="${role:-CC0-HOME}"
+  exec claude --resume "$target_uuid" 2>&1
 }
 
 # Fork a session (gate varies by QC_LEVEL)
@@ -453,27 +553,40 @@ _fork_session() {
   local parent_uuid="$1"
   local confirm_flag="${2:-}"
   local qc_level="$3"
+  local loa_cap="${4:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
 
   case "$qc_level" in
     "$QC0_HUMAN_ONLY")
       # QC0: require explicit --confirm flag
       if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "fork" "$parent_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC0 requires it)"
         _error "--fork requires --confirm flag in QC0_HUMAN_ONLY mode"
       fi
-      _gate_confirm "fork" "$parent_uuid"
+      _gate_confirm "fork" "$parent_uuid" "$qc_level" "$loa_cap"
       ;;
 
     "$QC1_SUPERVISED_LOOP")
       # QC1: require human confirmation (prevents runaway forking)
       if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "fork" "$parent_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC1 prevents runaway forking)"
         _error "--fork requires --confirm flag in QC1_SUPERVISED_LOOP mode (prevents runaway forking)"
       fi
-      _gate_confirm "fork" "$parent_uuid"
+      _gate_confirm "fork" "$parent_uuid" "$qc_level" "$loa_cap"
       ;;
 
     "$QC2_FULLY_AUTONOMOUS")
       # QC2: auto-approve and log to GitHub
-      _gate_auto_approve "fork" "$parent_uuid" "$qc_level"
+      _gate_auto_approve "fork" "$parent_uuid" "$qc_level" "$loa_cap"
       _log_to_github "fork" "$parent_uuid" "Forked session automatically"
       ;;
   esac
@@ -486,21 +599,36 @@ _fork_session() {
 _autonomous_loop() {
   local task="$1"
   local qc_level="$2"
+  local loa_cap="${3:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
 
   case "$qc_level" in
     "$QC0_HUMAN_ONLY")
+      _audit_log "autonomous-loop" "$task" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Forbidden in QC0_HUMAN_ONLY mode"
       _error "--autonomous-loop is forbidden in QC0_HUMAN_ONLY mode"
       ;;
 
     "$QC1_SUPERVISED_LOOP")
       # QC1: rate-limited (100 calls/hour)
-      _check_rate_limit
-      _gate_auto_approve "autonomous-loop" "$task" "$qc_level"
+      if ! _check_rate_limit; then
+        _audit_log "autonomous-loop" "$task" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Rate limit exceeded (100/hour)"
+        _error "Rate limit exceeded (100 calls/hour, QC_LEVEL=QC1_SUPERVISED_LOOP)"
+      fi
+      _gate_auto_approve "autonomous-loop" "$task" "$qc_level" "$loa_cap"
       ;;
 
     "$QC2_FULLY_AUTONOMOUS")
       # QC2: unlimited and logged
-      _gate_auto_approve "autonomous-loop" "$task" "$qc_level"
+      _gate_auto_approve "autonomous-loop" "$task" "$qc_level" "$loa_cap"
       _log_to_github "autonomous-loop" "$task" "Started autonomous loop"
       ;;
   esac
@@ -627,8 +755,10 @@ main() {
       [[ -n "$target" ]] || _error "--resume requires a UUID argument"
       local confirm="${3:-}"
       local qc_level
+      local loa_cap
       qc_level=$(_get_qc_level)
-      _resume_session "$target" "$confirm" "$qc_level"
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _resume_session "$target" "$confirm" "$qc_level" "$loa_cap"
       ;;
 
     --fork)
@@ -636,16 +766,20 @@ main() {
       [[ -n "$parent" ]] || _error "--fork requires a UUID argument"
       local confirm="${3:-}"
       local qc_level
+      local loa_cap
       qc_level=$(_get_qc_level)
-      _fork_session "$parent" "$confirm" "$qc_level"
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _fork_session "$parent" "$confirm" "$qc_level" "$loa_cap"
       ;;
 
     --autonomous-loop)
       local task="${2:-}"
       [[ -n "$task" ]] || _error "--autonomous-loop requires a task description"
       local qc_level
+      local loa_cap
       qc_level=$(_get_qc_level)
-      _autonomous_loop "$task" "$qc_level"
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      _autonomous_loop "$task" "$qc_level" "$loa_cap"
       ;;
 
     "")
