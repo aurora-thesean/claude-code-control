@@ -329,7 +329,7 @@ with open('$jsonl') as f:
 _sense_model() {
   local uuid="$1"
 
-  # Config override: instance-config.json or ANTHROPIC_MODEL env
+  # Priority 1: Check instance-config.json for config override
   local config_model=""
   if [[ -f "$HOME/.aurora-agent/instance-config.json" ]]; then
     config_model=$(python3 -c "
@@ -347,11 +347,25 @@ except: pass
     return
   fi
 
-  # Ground truth: ANTHROPIC_MODEL environment variable (if available in process env)
-  # Note: can't reliably read from /proc/{PID}/environ without access
-  # For now, default to UNKNOWN
+  # Priority 2: Check ANTHROPIC_MODEL environment variable
+  if [[ -n "${ANTHROPIC_MODEL:-}" ]]; then
+    echo "$ANTHROPIC_MODEL|GROUND_TRUTH|Process ANTHROPIC_MODEL env var"
+    return
+  fi
 
-  echo "MODEL_UNKNOWN|HEURISTIC_FALLBACK|Could not determine model from config or env"
+  # Priority 3: Check CLAUDE.md for PRIMARY model (intended model, not current)
+  local primary_model=""
+  if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
+    primary_model=$(grep "^PRIMARY=" "$HOME/.claude/CLAUDE.md" 2>/dev/null | cut -d= -f2)
+  fi
+
+  if [[ -n "$primary_model" ]]; then
+    echo "$primary_model|CONFIG|$HOME/.claude/CLAUDE.md (PRIMARY model preference)"
+    return
+  fi
+
+  # Fallback: Unable to determine
+  echo "MODEL_UNKNOWN|HEURISTIC_FALLBACK|Could not determine from config, env, or CLAUDE.md"
 }
 
 _sense_qc_level() {
