@@ -1,6 +1,6 @@
 # Aurora Claude Code Control Plane
 
-**Status**: v0.1.0-alpha (Sensor complete, Motor in development)
+**Status**: v0.1.0 (Gate logic working, session execution incomplete)
 
 A framework for Claude Code instances to understand themselves, their lineage, and their capabilities. Based on TASQS (agentic semver) and EQQQH identity frameworks.
 
@@ -64,7 +64,7 @@ qhoami --sources           # Data flow documentation
     "from": "no compacted ancestors"
   },
   "qc_level": {
-    "value": "QC2_FULLY_AUTONOMOUS",
+    "value": "QC0_HUMAN_ONLY",
     "source": "CONFIG",
     "from": "LOA_CAP=2 in /home/aurora/.claude/CLAUDE.md"
   },
@@ -189,11 +189,28 @@ bash tests/test-qhoami-simple.sh       # Verify qhoami works
 bash tests/test-qlaude.sh              # Test motor tool (when available)
 ```
 
-## Future Work
+## Implementation Status
 
-- [ ] qlaude motor tool (approval gates, rate limiting)
-- [ ] GitHub audit logging for QC2 actions
-- [ ] Multi-host support (LAN detection, remote API)
+**Complete**:
+- ✅ qhoami sensor (reads 7D identity from ground truth)
+- ✅ qlaude gate logic (QC0/QC1/QC2 enforcement)
+- ✅ LOA_CAP immutability (reads only from CLAUDE.md, cannot spoof)
+- ✅ Task queue format (durable JSON, atomic claim/archive)
+- ✅ GitHub Actions CI/CD
+
+**In Progress**:
+- 🚧 qlaude --resume execution (gate checks work, PTY spawn in progress)
+- 🚧 Task queue consumer (consumer script created, integration pending)
+- 🚧 AGENTS.md enforcement (warrants created, no enforcement mechanism yet)
+- 🚧 Claude Code skills (files created, /skill integration untested)
+
+**TODO**:
+- [ ] qlaude --fork execution
+- [ ] GitHub audit logging for QC2 actions (gh CLI integration)
+- [ ] Multi-host support (NFS-safe task queue)
+- [ ] AGENTS.md enforcement at invocation boundaries
+- [ ] Unit tests + integration tests in CI
+- [ ] Model detection (always reports HAIKU, should verify runtime)
 - [ ] EQQQH full 5-component identity
 - [ ] Integrations with cmux, Ralph, Ruflo, other Claude Code tools
 
