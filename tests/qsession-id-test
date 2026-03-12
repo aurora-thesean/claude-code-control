@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# qsession-id-test — Unit tests for qsession-id (Unit 1 sensor)
+#
+# Tests UUID ground truth detection via inotify directory inodes
+# Exit: 0 if all pass, non-zero otherwise
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+QSESSION_ID="$SCRIPT_DIR/qsession-id"
+TASKS_DIR="$HOME/.claude/tasks"
+
+# Test counters
+PASS_COUNT=0
+FAIL_COUNT=0
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ─── TEST UTILITIES ────────────────────────────────────────
+
+test_pass() {
+  echo -e "${GREEN}✓${NC} $*" >&2
+  ((PASS_COUNT++))
+}
+
+test_fail() {
+  echo -e "${RED}✗${NC} $*" >&2
+  ((FAIL_COUNT++))
+}
+
+test_info() {
+  echo -e "${BLUE}[TEST]${NC} $*" >&2
+}
+
+# JSON validation
+validate_json() {
+  local json_str="$1"
+  echo "$json_str" | jq . >/dev/null 2>&1
+}
+
+# ─── TEST CASES ───────────────────────────────────────────
+
+test_help() {
+  test_info "Test: --help shows usage"
+  output=$("$QSESSION_ID" --help 2>&1)
+  if [[ "$output" == *"Usage:"* ]]; then
+    test_pass "--help output contains 'Usage:'"
+  else
+    test_fail "--help should show usage"
+  fi
+}
+
+test_current_session() {
+  test_info "Test: --self returns current session UUID"
+  output=$("$QSESSION_ID" --self 2>/dev/null)
+
+  if ! validate_json "$output"; then
+    test_fail "Output is not valid JSON"
+    return
+  fi
+
+  uuid=$(echo "$output" | jq -r '.data.session_uuid // empty')
+  if [[ -z "$uuid" ]]; then
+    test_fail "Could not extract session_uuid from JSON"
+    return
+  fi
+
+  # UUID should match UUID format (8-4-4-4-12 hex digits)
+  if [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+    test_pass "Current session UUID format is valid: $uuid"
+  else
+    test_fail "UUID format is invalid: $uuid"
+  fi
+}
+
+test_current_session_inode() {
+  test_info "Test: --self returns valid inode"
+  output=$("$QSESSION_ID" --self 2>/dev/null)
+
+  uuid=$(echo "$output" | jq -r '.data.session_uuid')
+  inode=$(echo "$output" | jq -r '.data.inode')
+
+  # Verify inode matches filesystem
+  actual_inode=$(stat -c %i "$TASKS_DIR/$uuid" 2>/dev/null) || {
+    test_fail "Could not stat $TASKS_DIR/$uuid"
+    return
+  }
+
+  if [[ "$inode" == "$actual_inode" ]]; then
+    test_pass "Inode matches filesystem: $inode"
+  else
+    test_fail "Inode mismatch: returned=$inode, filesystem=$actual_inode"
+  fi
+}
+
+test_source_attribution() {
+  test_info "Test: Output includes source attribution"
+  output=$("$QSESSION_ID" --self 2>/dev/null)
+
+  source=$(echo "$output" | jq -r '.source // empty')
+  if [[ "$source" == "GROUND_TRUTH" ]]; then
+    test_pass "Source attribution is GROUND_TRUTH"
+  else
+    test_fail "Source should be GROUND_TRUTH, got: $source"
+  fi
+}
+
+test_uuid_lookup() {
+  test_info "Test: UUID prefix lookup works"
+
+  # Get a known UUID from filesystem
+  if [[ ! -d "$TASKS_DIR" ]]; then
+    test_fail "Tasks directory does not exist: $TASKS_DIR"
+    return
+  fi
+
+  known_uuid=$(ls -1 "$TASKS_DIR" | head -1)
+  if [[ -z "$known_uuid" ]]; then
+    test_fail "No UUIDs found in $TASKS_DIR"
+    return
+  fi
+
+  # Test full UUID lookup
+  output=$("$QSESSION_ID" "$known_uuid" 2>/dev/null)
+  if ! validate_json "$output"; then
+    test_fail "UUID lookup output is not valid JSON"
+    return
+  fi
+
+  returned_uuid=$(echo "$output" | jq -r '.data.session_uuid')
+  if [[ "$returned_uuid" == "$known_uuid" ]]; then
+    test_pass "Full UUID lookup: $known_uuid"
+  else
+    test_fail "UUID mismatch in lookup: expected=$known_uuid, got=$returned_uuid"
+  fi
+}
+
+test_uuid_prefix_lookup() {
+  test_info "Test: UUID prefix lookup works"
+
+  known_uuid=$(ls -1 "$TASKS_DIR" | head -1)
+  prefix="${known_uuid:0:8}"  # First 8 chars
+
+  output=$("$QSESSION_ID" "$prefix" 2>/dev/null)
+  if ! validate_json "$output"; then
+    test_fail "Prefix lookup output is not valid JSON"
+    return
+  fi
+
+  returned_uuid=$(echo "$output" | jq -r '.data.session_uuid')
+  if [[ "$returned_uuid" == "$known_uuid" ]]; then
+    test_pass "UUID prefix lookup: $prefix -> $known_uuid"
+  else
+    test_fail "Prefix lookup mismatch: expected=$known_uuid, got=$returned_uuid"
+  fi
+}
+
+test_error_handling() {
+  test_info "Test: Error handling for nonexistent UUID"
+
+  output=$("$QSESSION_ID" deadbeef 2>&1)
+  exit_code=$?
+
+  if [[ $exit_code -eq 1 ]]; then
+    test_pass "Error exit code is 1"
+  else
+    test_fail "Error exit code should be 1, got: $exit_code"
+  fi
+
+  if validate_json "$output"; then
+    error_type=$(echo "$output" | jq -r '.type // empty')
+    if [[ "$error_type" == "error" ]]; then
+      test_pass "Error JSON has type='error'"
+    else
+      test_fail "Error JSON type should be 'error', got: $error_type"
+    fi
+  else
+    test_fail "Error output is not valid JSON"
+  fi
+}
+
+test_all_listing() {
+  test_info "Test: --all lists all sessions"
+  output=$("$QSESSION_ID" --all 2>/dev/null)
+
+  if ! validate_json "$output"; then
+    test_fail "--all output is not valid JSON array"
+    return
+  fi
+
+  count=$(echo "$output" | jq 'length')
+  if [[ $count -gt 0 ]]; then
+    test_pass "--all returned $count sessions"
+  else
+    test_fail "--all should return at least one session"
+  fi
+
+  # Check that each entry has required fields
+  for_each=$(echo "$output" | jq -r '.[] | "\(.data.session_uuid):\(.data.inode)"' | head -1)
+  if [[ -n "$for_each" ]]; then
+    test_pass "Each entry has session_uuid and inode"
+  else
+    test_fail "Entries missing required fields"
+  fi
+}
+
+test_empty_args_same_as_self() {
+  test_info "Test: No args returns same result as --self"
+
+  output_empty=$("$QSESSION_ID" 2>/dev/null)
+  output_self=$("$QSESSION_ID" --self 2>/dev/null)
+
+  if [[ "$output_empty" == "$output_self" ]]; then
+    test_pass "Empty args returns same result as --self"
+  else
+    test_fail "Empty args should match --self"
+  fi
+}
+
+test_json_schema() {
+  test_info "Test: Success JSON matches schema"
+  output=$("$QSESSION_ID" --self 2>/dev/null)
+
+  # Check required fields
+  type=$(echo "$output" | jq -r '.type // empty')
+  unit=$(echo "$output" | jq -r '.unit // empty')
+  timestamp=$(echo "$output" | jq -r '.timestamp // empty')
+  session_uuid=$(echo "$output" | jq -r '.data.session_uuid // empty')
+  inode=$(echo "$output" | jq -r '.data.inode // empty')
+  source=$(echo "$output" | jq -r '.source // empty')
+
+  local all_good=1
+  [[ -n "$type" ]] && [[ "$type" == "sensor" ]] || { test_fail "Missing/wrong type"; all_good=0; }
+  [[ -n "$unit" ]] && [[ "$unit" == "1" ]] || { test_fail "Missing/wrong unit"; all_good=0; }
+  [[ -n "$timestamp" ]] || { test_fail "Missing timestamp"; all_good=0; }
+  [[ -n "$session_uuid" ]] || { test_fail "Missing session_uuid"; all_good=0; }
+  [[ -n "$inode" ]] || { test_fail "Missing inode"; all_good=0; }
+  [[ -n "$source" ]] && [[ "$source" == "GROUND_TRUTH" ]] || { test_fail "Missing/wrong source"; all_good=0; }
+
+  [[ $all_good -eq 1 ]] && test_pass "JSON schema validation passed"
+}
+
+# ─── MAIN ──────────────────────────────────────────────────
+
+main() {
+  echo -e "${BLUE}=== qsession-id Test Suite ===${NC}" >&2
+  echo "" >&2
+
+  test_help
+  test_current_session
+  test_current_session_inode
+  test_source_attribution
+  test_uuid_lookup
+  test_uuid_prefix_lookup
+  test_error_handling
+  test_all_listing
+  test_empty_args_same_as_self
+  test_json_schema
+
+  echo "" >&2
+  echo -e "${BLUE}=== Test Summary ===${NC}" >&2
+  echo -e "${GREEN}Passed:${NC} $PASS_COUNT" >&2
+  echo -e "${RED}Failed:${NC} $FAIL_COUNT" >&2
+
+  if [[ $FAIL_COUNT -eq 0 ]]; then
+    echo -e "${GREEN}All tests passed!${NC}" >&2
+    exit 0
+  else
+    exit 1
+  fi
+}
+
+main
