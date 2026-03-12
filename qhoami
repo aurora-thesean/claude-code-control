@@ -162,8 +162,20 @@ _find_session_uuid() {
 }
 
 # Find JSONL file with most records for this sessionId
+# OPTIMIZATION: Try direct UUID-based lookup first (FAST PATH), fall back to search (SLOW PATH)
 _find_jsonl() {
   local uuid="$1"
+
+  # FAST PATH: Try direct match on UUID filename (most sessions use UUID as filename)
+  local direct_match
+  direct_match=$(find "$PROJECT_DIR" -name "${uuid}.jsonl" -type f 2>/dev/null | head -1)
+  if [[ -n "$direct_match" ]]; then
+    echo "$direct_match"
+    return 0
+  fi
+
+  # SLOW PATH: Search all JSONL files if direct match failed
+  # (this is for legacy sessions or unusual directory structures)
   local best_jsonl=""
   local best_count=0
   for f in "$PROJECT_DIR"/*/*.jsonl; do
@@ -231,21 +243,15 @@ _sense_sidecar() {
 
   # Ground truth: parentUuid field in first JSONL record with this sessionId
   local parent_uuid
-  parent_uuid=$(python3 -c "
-import json
-with open('$jsonl') as f:
-    for line in f:
-        try:
-            r = json.loads(line)
-            if r.get('sessionId') == '$uuid':
-                parent = r.get('parentUuid')
-                if parent is None:
-                    print('null')
-                else:
-                    print(parent)
-                break
-        except: pass
-" 2>/dev/null || echo "?")
+  parent_uuid=$(grep "\"sessionId\".*\"$uuid\"" "$jsonl" 2>/dev/null | head -1 | \
+    awk '{
+      if (match($0, /"parentUuid"[[:space:]]*:[[:space:]]*null/)) {
+        print "null"; exit
+      } else if (match($0, /"parentUuid"[[:space:]]*:[[:space:]]*"([^"]+)"/, arr)) {
+        print arr[1]; exit
+      }
+    }') || parent_uuid=""
+  [[ -z "$parent_uuid" ]] && parent_uuid="?"
 
   # Config override: .role file in tasks dir
   local config_role
@@ -292,24 +298,18 @@ _sense_generation() {
   fi
 
   # Ground truth: count ancestor sessionIds in JSONL via parentUuid chain
-  # If parent doesn't appear in JSONL, it was compacted; increment generation
+  # OPTIMIZATION: Use awk instead of Python
   local generation=0
   local current_parent
-  current_parent=$(python3 -c "
-import json
-with open('$jsonl') as f:
-    for line in f:
-        try:
-            r = json.loads(line)
-            if r.get('sessionId') == '$uuid':
-                parent = r.get('parentUuid')
-                if parent is None:
-                    print('null')
-                else:
-                    print(parent)
-                break
-        except: pass
-" 2>/dev/null || echo "?")
+  current_parent=$(grep "\"sessionId\".*\"$uuid\"" "$jsonl" 2>/dev/null | head -1 | \
+    awk '{
+      if (match($0, /"parentUuid"[[:space:]]*:[[:space:]]*null/)) {
+        print "null"; exit
+      } else if (match($0, /"parentUuid"[[:space:]]*:[[:space:]]*"([^"]+)"/, arr)) {
+        print arr[1]; exit
+      }
+    }') || current_parent=""
+  [[ -z "$current_parent" ]] && current_parent="?"
 
   local source_note="no compacted ancestors in JSONL (GROUND_TRUTH)"
 
@@ -328,39 +328,24 @@ with open('$jsonl') as f:
 
 _sense_model() {
   local uuid="$1"
+  local jsonl="$2"
 
   # Ground truth: Read model from session JSONL message.model field
-  if [[ -n "$uuid" ]]; then
-    local jsonl_file
-    jsonl_file=$(find "$HOME/.claude/projects" -name "${uuid}.jsonl" -type f 2>/dev/null | head -1)
+  # OPTIMIZATION: Use awk instead of Python, pass JSONL as parameter instead of find
+  if [[ -n "$uuid" && -n "$jsonl" ]]; then
+    local model
+    model=$(awk -v uuid="$uuid" '
+      /"sessionId"[[:space:]]*:[[:space:]]*"'"$uuid"'"/ && /"message"/ && /"model"/ {
+        if (match($0, /"model"[[:space:]]*:[[:space:]]*"([^"]+)"/, arr)) {
+          last_model = arr[1]
+        }
+      }
+      END { if (last_model) print last_model }
+    ' "$jsonl" 2>/dev/null)
 
-    if [[ -n "$jsonl_file" ]]; then
-      local model
-      model=$(JSONL_FILE="$jsonl_file" python3 << 'PYSCRIPT'
-import json
-import os
-
-jsonl_file = os.environ['JSONL_FILE']
-last_model = None
-try:
-    with open(jsonl_file) as f:
-        for line in f:
-            record = json.loads(line)
-            # Look for message.model field in records - keep scanning to get LATEST
-            if 'message' in record and isinstance(record['message'], dict):
-                if 'model' in record['message']:
-                    last_model = record['message']['model']
-    if last_model:
-        print(last_model)
-except:
-    pass
-PYSCRIPT
-      )
-
-      if [[ -n "$model" ]]; then
-        echo "$model|GROUND_TRUTH|Session JSONL message.model field"
-        return
-      fi
+    if [[ -n "$model" ]]; then
+      echo "$model|GROUND_TRUTH|Session JSONL message.model field"
+      return
     fi
   fi
 
@@ -431,9 +416,9 @@ except: pass
     return
   fi
 
-  # Ground truth: JSONL line count and first/last timestamp
+  # Ground truth: JSONL line count (OPTIMIZATION: use awk instead of grep -c)
   local line_count
-  line_count=$(grep -c "\"sessionId\".*\"$uuid\"" "$jsonl" 2>/dev/null) || line_count=0
+  line_count=$(awk -v uuid="$uuid" '/"sessionId"[[:space:]]*:[[:space:]]*"'"$uuid"'"/ { count++ } END { print count+0 }' "$jsonl" 2>/dev/null) || line_count=0
 
   local memory_val=""
   local source_type=""
@@ -514,7 +499,7 @@ _build_identity() {
   local uuid="$1"
   local claude_pid="$2"
 
-  # Find JSONL
+  # Find JSONL (CACHED once at start)
   local jsonl
   jsonl=$(_find_jsonl "$uuid") || jsonl=""
 
@@ -523,14 +508,34 @@ _build_identity() {
     return 1
   fi
 
-  # Sense each dimension
-  IFS='|' read -r avatar_val avatar_src avatar_note < <(_sense_avatar "$uuid" "$claude_pid")
+  # OPTIMIZATION: Parallelize independent sensors (_sense_avatar and _sense_location don't need JSONL)
+  # Launch async background jobs for JSONL-independent sensors
+  _sense_avatar "$uuid" "$claude_pid" > /tmp/qhoami_avatar.$$ 2>&1 &
+  local avatar_pid=$!
+
+  _sense_location "$uuid" > /tmp/qhoami_location.$$ 2>&1 &
+  local location_pid=$!
+
+  # Serial sensors that depend on JSONL (can't parallelize without more infrastructure)
   IFS='|' read -r sidecar_val sidecar_src sidecar_note < <(_sense_sidecar "$uuid" "$jsonl")
   IFS='|' read -r gen_val gen_src gen_note < <(_sense_generation "$uuid" "$jsonl")
-  IFS='|' read -r model_val model_src model_note < <(_sense_model "$uuid")
+  IFS='|' read -r model_val model_src model_note < <(_sense_model "$uuid" "$jsonl")
   IFS='|' read -r qc_val qc_src qc_note < <(_sense_qc_level "$uuid")
   IFS='|' read -r mem_val mem_src mem_note < <(_sense_memory "$uuid" "$jsonl")
-  IFS='|' read -r loc_val loc_src loc_note < <(_sense_location "$uuid")
+
+  # Wait for background jobs and read results
+  wait $avatar_pid $location_pid 2>/dev/null
+  IFS='|' read -r avatar_val avatar_src avatar_note < /tmp/qhoami_avatar.$$ 2>/dev/null || {
+    avatar_val="AVATAR_CUSTOM"
+    avatar_src="HEURISTIC_FALLBACK"
+    avatar_note="background sensor failed"
+  }
+  IFS='|' read -r loc_val loc_src loc_note < /tmp/qhoami_location.$$ 2>/dev/null || {
+    loc_val="LOC_UNKNOWN"
+    loc_src="HEURISTIC_FALLBACK"
+    loc_note="background sensor failed"
+  }
+  rm -f /tmp/qhoami_avatar.$$ /tmp/qhoami_location.$$ 2>/dev/null
 
   # Build birth timestamp
   local born
