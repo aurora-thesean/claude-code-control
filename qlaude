@@ -47,6 +47,9 @@ QLAUDE_RESET_TIME_FILE="$AURORA_AGENT_DIR/.qlaude-reset-time"
 # Audit log file
 QLAUDE_AUDIT_LOG="$AURORA_AGENT_DIR/.qlaude-audit.jsonl"
 
+# Warrant storage (for NESTED_LOA delegation)
+WARRANTS_DIR="$AURORA_AGENT_DIR/warrants"
+
 # --- Utility Functions ---
 
 _log() {
@@ -698,6 +701,7 @@ USAGE:
   $SCRIPT_NAME --resume <uuid> [--confirm]      Resume a session
   $SCRIPT_NAME --fork <uuid> [--confirm]        Fork a session
   $SCRIPT_NAME --autonomous-loop <task>         Run autonomous loop
+  $SCRIPT_NAME --delegate <task> --to <uuid>    Delegate to child (NESTED_LOA)
 
 READ-ONLY OPERATIONS (no gates):
   --list-siblings [<uuid>]       Show all sessionIds sharing same parent.
@@ -723,6 +727,14 @@ PROTECTED OPERATIONS (gates vary by QC_LEVEL):
                                  QC0: FORBIDDEN
                                  QC1: auto-approved + rate-limited (100/hr)
                                  QC2: auto-approved + unlimited
+
+  --delegate <task>              (NESTED_LOA) Create warrant for child delegation.
+    --to <child_uuid>            Child agent to delegate to
+    --with-loa <level>           Proposed autonomy level (0-10, default 4)
+    [--trust <score>]            Trust score 0.0-1.0 (default 0.5)
+    [--time-limit <secs>]        Task time limit in seconds (default 3600)
+                                 QC0-1: FORBIDDEN (requires QC2_FULLY_AUTONOMOUS)
+                                 QC2: auto-approved, warrant created + logged
 
 QC_LEVEL DETERMINATION:
   QC_LEVEL is computed from LOA_CAP in $CLAUDE_GLOBAL_MD:
@@ -755,6 +767,90 @@ EOF
 
 _show_version() {
   echo "$SCRIPT_NAME v$VERSION"
+}
+
+# --- NESTED_LOA Warrant Functions ---
+
+# Create a warrant for delegating autonomy to a child agent
+# Usage: _create_warrant <child_uuid> <task_description> <proposed_loa_cap> <trust_score> [time_limit_secs]
+_create_warrant() {
+  local child_uuid="$1"
+  local task_description="$2"
+  local proposed_loa_cap="$3"
+  local trust_score="${4:-0.5}"
+  local time_limit_secs="${5:-3600}"
+
+  # Validate inputs
+  if [[ ! "$child_uuid" =~ ^[a-f0-9-]{36}$ ]]; then
+    _error "Invalid child UUID format: $child_uuid"
+  fi
+
+  if ! [[ "$proposed_loa_cap" =~ ^[0-9]+$ ]] || (( proposed_loa_cap < 0 || proposed_loa_cap > 10 )); then
+    _error "Invalid LOA_CAP: $proposed_loa_cap (must be 0-10)"
+  fi
+
+  # Get parent LOA
+  local parent_loa
+  parent_loa=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || parent_loa=2
+
+  if (( proposed_loa_cap > parent_loa )); then
+    _error "Cannot propose LOA_CAP=$proposed_loa_cap (parent LOA_CAP=$parent_loa)"
+  fi
+
+  # Create warrant directory
+  mkdir -p "$WARRANTS_DIR"
+
+  # Generate warrant ID (UUID-based)
+  local warrant_id
+  warrant_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
+
+  # Create warrant JSON
+  local warrant_file="$WARRANTS_DIR/$warrant_id.json"
+  local expires_at
+  expires_at=$(python3 << 'PYDATE'
+from datetime import datetime, timedelta, timezone
+expires = datetime.now(timezone.utc) + timedelta(hours=1)
+print(expires.isoformat().replace("+00:00", "Z"))
+PYDATE
+  )
+
+  local parent_uuid
+  parent_uuid=$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo "unknown")
+
+  # Write warrant
+  python3 << PYJSON > "$warrant_file"
+import json
+from datetime import datetime, timezone
+
+warrant = {
+    "type": "loa_proposal",
+    "warrant_id": "$warrant_id",
+    "parent_uuid": "$parent_uuid",
+    "child_uuid": "$child_uuid",
+    "task_description": "$task_description",
+    "proposed_loa_cap": $proposed_loa_cap,
+    "trust_score": $trust_score,
+    "time_limit_seconds": $time_limit_secs,
+    "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "expires_at": "$expires_at",
+    "parent_loa_cap": $parent_loa
+}
+
+print(json.dumps(warrant, indent=2))
+PYJSON
+
+  _log "Warrant created: $warrant_file"
+  _log "Warrant ID: $warrant_id"
+  _log "Child UUID: $child_uuid"
+  _log "Proposed LOA_CAP: $proposed_loa_cap (parent LOA_CAP: $parent_loa)"
+  _log "Trust score: $trust_score"
+  _log "Expires at: $expires_at"
+
+  # Log warrant creation to audit trail
+  _audit_log "warrant-create" "$warrant_id" "PROPOSED" "$(( parent_loa / 2 ))" "$parent_loa" "Delegating task to $child_uuid with LOA_CAP=$proposed_loa_cap"
+
+  # Output warrant details
+  echo "{\"warrant_id\": \"$warrant_id\", \"warrant_file\": \"$warrant_file\"}"
 }
 
 # --- Main Dispatch ---
@@ -831,6 +927,61 @@ main() {
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
       _check_agents_md "autonomous-loop" || _log "WARNING: AGENTS.md authorization check failed for autonomous-loop"
       _autonomous_loop "$task" "$qc_level" "$loa_cap"
+      ;;
+
+    --delegate)
+      # NESTED_LOA: Delegate task to child with proposed autonomy level
+      # Usage: qlaude --delegate <task> --to <child_uuid> --with-loa <level>
+      local task="${2:-}"
+      local child_uuid=""
+      local proposed_loa=4  # Default: supervised level
+      local trust_score=0.5  # Default: moderate trust
+      local time_limit=3600  # Default: 1 hour
+
+      [[ -n "$task" ]] || _error "--delegate requires task description as first argument"
+
+      # Parse remaining arguments
+      shift 2
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --to)
+            child_uuid="${2:-}"
+            [[ -n "$child_uuid" ]] || _error "--to requires a UUID"
+            shift 2
+            ;;
+          --with-loa)
+            proposed_loa="${2:-}"
+            shift 2
+            ;;
+          --trust)
+            trust_score="${2:-}"
+            shift 2
+            ;;
+          --time-limit)
+            time_limit="${2:-}"
+            shift 2
+            ;;
+          *)
+            _error "Unknown argument in --delegate: $1"
+            ;;
+        esac
+      done
+
+      [[ -n "$child_uuid" ]] || _error "--delegate requires --to <child_uuid>"
+
+      local qc_level
+      local loa_cap
+      qc_level=$(_get_qc_level)
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+
+      # Require QC2 (fully autonomous) to create warrants
+      if (( qc_level < 2 )); then
+        _audit_log "warrant-create" "$child_uuid" "REJECTED" "$qc_level" "$loa_cap" "Only QC2_FULLY_AUTONOMOUS can create warrants"
+        _error "Warrant creation requires QC_LEVEL=2 (FULLY_AUTONOMOUS), but current is QC$qc_level"
+      fi
+
+      _check_agents_md "delegate" || _log "WARNING: AGENTS.md authorization check failed for delegate"
+      _create_warrant "$child_uuid" "$task" "$proposed_loa" "$trust_score" "$time_limit"
       ;;
 
     "")
