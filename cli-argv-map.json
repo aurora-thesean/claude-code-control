@@ -1,0 +1,413 @@
+{
+  "type": "argv-analysis",
+  "timestamp": "2026-03-12T07:54:52.031578Z",
+  "unit": "11",
+  "source": "claude-help-output + cli.js analysis",
+  "data": {
+    "entry_point": {
+      "function": "main",
+      "line": null,
+      "description": "CLI entry point invoked with process.argv"
+    },
+    "option_parsing": {
+      "library": "yargs (inferred from help output structure)",
+      "line": null,
+      "description": "Arguments parsed by yargs or similar CLI framework"
+    },
+    "argv_patterns": [
+      {
+        "pattern": "--add-dir",
+        "description": "Additional directories to allow tool access to",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--agent",
+        "description": "Agent for the current session. Overrides the 'agent' setting.",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--agents",
+        "description": "JSON object defining custom agents",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--allow-dangerously-skip-permissions",
+        "description": "Enable bypassing all permission checks",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--allowedTools/--allowed-tools",
+        "description": "Comma or space-separated list of allowed tools",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--append-system-prompt",
+        "description": "Append a system prompt to default",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--betas",
+        "description": "Beta headers to include in API requests",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--chrome",
+        "description": "Enable Claude in Chrome integration",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-c/--continue",
+        "description": "Continue the most recent conversation",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--dangerously-skip-permissions",
+        "description": "Bypass all permission checks",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-d/--debug",
+        "description": "Enable debug mode with optional category filtering",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--debug-file",
+        "description": "Write debug logs to a specific file path",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--disable-slash-commands",
+        "description": "Disable all skills",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--disallowedTools/--disallowed-tools",
+        "description": "Comma or space-separated list of denied tools",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--effort",
+        "description": "Effort level for the current session (low, medium, high)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--fallback-model",
+        "description": "Enable automatic fallback to specified model",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--file",
+        "description": "File resources to download at startup",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--fork-session",
+        "description": "When resuming, create a new session ID",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--from-pr",
+        "description": "Resume a session linked to a PR by PR number/URL",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-h/--help",
+        "description": "Display help for command",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--ide",
+        "description": "Automatically connect to IDE on startup",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--include-partial-messages",
+        "description": "Include partial message chunks as they arrive",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--input-format",
+        "description": "Input format (text or stream-json)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--json-schema",
+        "description": "JSON Schema for structured output validation",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--max-budget-usd",
+        "description": "Maximum dollar amount to spend on API calls",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--mcp-config",
+        "description": "Load MCP servers from JSON files or strings",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--mcp-debug",
+        "description": "[DEPRECATED] Enable MCP debug mode",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--model",
+        "description": "Model for the current session (alias or full name)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--no-chrome",
+        "description": "Disable Claude in Chrome integration",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--no-session-persistence",
+        "description": "Disable session persistence",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--output-format",
+        "description": "Output format (text, json, or stream-json)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--permission-mode",
+        "description": "Permission mode (acceptEdits, bypassPermissions, default, dontAsk, plan, auto)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--plugin-dir",
+        "description": "Load plugins from directories for this session only",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-p/--print",
+        "description": "Print response and exit (useful for pipes)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--replay-user-messages",
+        "description": "Re-emit user messages from stdin back on stdout",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-r/--resume",
+        "description": "Resume a conversation by session ID",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--session-id",
+        "description": "Use a specific session ID for the conversation (must be valid UUID)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--setting-sources",
+        "description": "Comma-separated list of setting sources (user, project, local)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--settings",
+        "description": "Path to settings JSON file or JSON string",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--strict-mcp-config",
+        "description": "Only use MCP servers from --mcp-config",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--system-prompt",
+        "description": "System prompt to use for the session",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--tmux",
+        "description": "Create a tmux session for the worktree (requires --worktree)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--tools",
+        "description": "Specify list of available tools from built-in set",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "--verbose",
+        "description": "Override verbose mode setting from config",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-v/--version",
+        "description": "Output the version number",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "-w/--worktree",
+        "description": "Create a new git worktree for this session",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "PROMPT",
+        "description": "Your prompt (positional argument)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      },
+      {
+        "pattern": "COMMAND",
+        "description": "Command to execute (agents, auth, doctor, install, mcp, plugin, setup-token, update/upgrade)",
+        "line": null,
+        "handler": null,
+        "source": "help-output"
+      }
+    ],
+    "commands": [
+      {
+        "name": "agents",
+        "description": "List configured agents",
+        "usage": "claude agents [options]"
+      },
+      {
+        "name": "auth",
+        "description": "Manage authentication",
+        "usage": "claude auth"
+      },
+      {
+        "name": "doctor",
+        "description": "Check the health of your Claude Code auto-updater",
+        "usage": "claude doctor"
+      },
+      {
+        "name": "install",
+        "description": "Install Claude Code native build",
+        "usage": "claude install [options] [target]"
+      },
+      {
+        "name": "mcp",
+        "description": "Configure and manage MCP servers",
+        "usage": "claude mcp"
+      },
+      {
+        "name": "plugin",
+        "description": "Manage Claude Code plugins",
+        "usage": "claude plugin"
+      },
+      {
+        "name": "setup-token",
+        "description": "Set up a long-lived authentication token",
+        "usage": "claude setup-token"
+      },
+      {
+        "name": "update|upgrade",
+        "description": "Check for updates and install if available",
+        "usage": "claude update"
+      }
+    ],
+    "positional_arguments": [
+      {
+        "name": "prompt",
+        "description": "Your prompt",
+        "position": "last",
+        "optional": true
+      },
+      {
+        "name": "command",
+        "description": "Subcommand to execute",
+        "position": "first",
+        "optional": true
+      }
+    ]
+  },
+  "error": null
+}

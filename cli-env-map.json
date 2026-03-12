@@ -1,0 +1,3030 @@
+{
+  "type": "env-analysis",
+  "timestamp": "2026-03-12T07:54:52.031578Z",
+  "unit": "11",
+  "source": "cli.js grep + documentation",
+  "data": {
+    "env_vars": [
+      {
+        "name": "ALACRITTY_LOG",
+        "description": "Environment variable: ALACRITTY_LOG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANALYTICS_LOG_TOOL_DETAILS",
+        "description": "Environment variable: ANALYTICS_LOG_TOOL_DETAILS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_API_KEY",
+        "description": "Anthropic API key for authentication",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_AUTH_TOKEN",
+        "description": "Anthropic authentication token",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_BASE_URL",
+        "description": "Custom base URL for Anthropic API",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_BEDROCK_BASE_URL",
+        "description": "Anthropic on AWS Bedrock URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_BETAS",
+        "description": "Beta feature headers for API requests",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_CUSTOM_HEADERS",
+        "description": "Custom headers for API requests",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "description": "Default Haiku model variant",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "description": "Default Opus model variant",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "description": "Default Sonnet model variant",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_FOUNDRY_API_KEY",
+        "description": "Anthropic Foundry API key",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_FOUNDRY_BASE_URL",
+        "description": "Anthropic Foundry base URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_FOUNDRY_RESOURCE",
+        "description": "Anthropic Foundry resource identifier",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_MODEL",
+        "description": "Override default model",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_SMALL_FAST_MODEL",
+        "description": "Small/fast model for subagents",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+        "description": "AWS region for small fast model",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ANTHROPIC_VERTEX_PROJECT_ID",
+        "description": "Google Vertex AI project ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "API_TIMEOUT_MS",
+        "description": "Environment variable: API_TIMEOUT_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "APPDATA",
+        "description": "Environment variable: APPDATA",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "APP_URL",
+        "description": "Environment variable: APP_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AUDIO_CAPTURE_NODE_PATH",
+        "description": "Environment variable: AUDIO_CAPTURE_NODE_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_ACCESS_KEY_ID",
+        "description": "AWS access key ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_BEARER_TOKEN_BEDROCK",
+        "description": "Environment variable: AWS_BEARER_TOKEN_BEDROCK",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_DEFAULT_REGION",
+        "description": "Environment variable: AWS_DEFAULT_REGION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_EXECUTION_ENV",
+        "description": "Environment variable: AWS_EXECUTION_ENV",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_LAMBDA_BENCHMARK_MODE",
+        "description": "Environment variable: AWS_LAMBDA_BENCHMARK_MODE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_LAMBDA_FUNCTION_NAME",
+        "description": "Environment variable: AWS_LAMBDA_FUNCTION_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_LOGIN_CACHE_DIRECTORY",
+        "description": "Environment variable: AWS_LOGIN_CACHE_DIRECTORY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_PROFILE",
+        "description": "AWS profile name",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_REGION",
+        "description": "AWS region",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_SECRET_ACCESS_KEY",
+        "description": "AWS secret access key",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AWS_SESSION_TOKEN",
+        "description": "AWS session token",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_ADDITIONALLY_ALLOWED_TENANTS",
+        "description": "Environment variable: AZURE_ADDITIONALLY_ALLOWED_TENANTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_AUTHORITY_HOST",
+        "description": "Azure authority host",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_CLIENT_CERTIFICATE_PASSWORD",
+        "description": "Environment variable: AZURE_CLIENT_CERTIFICATE_PASSWORD",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_CLIENT_CERTIFICATE_PATH",
+        "description": "Path to Azure client certificate",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_CLIENT_ID",
+        "description": "Azure client ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_CLIENT_SECRET",
+        "description": "Azure client secret",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_CLIENT_SEND_CERTIFICATE_CHAIN",
+        "description": "Environment variable: AZURE_CLIENT_SEND_CERTIFICATE_CHAIN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_FEDERATED_TOKEN_FILE",
+        "description": "Environment variable: AZURE_FEDERATED_TOKEN_FILE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_FUNCTIONS_ENVIRONMENT",
+        "description": "Environment variable: AZURE_FUNCTIONS_ENVIRONMENT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_IDENTITY_DISABLE_MULTITENANTAUTH",
+        "description": "Environment variable: AZURE_IDENTITY_DISABLE_MULTITENANTAUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_PASSWORD",
+        "description": "Azure password",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_POD_IDENTITY_AUTHORITY_HOST",
+        "description": "Environment variable: AZURE_POD_IDENTITY_AUTHORITY_HOST",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_REGIONAL_AUTHORITY_NAME",
+        "description": "Environment variable: AZURE_REGIONAL_AUTHORITY_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_TENANT_ID",
+        "description": "Azure tenant ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_TOKEN_CREDENTIALS",
+        "description": "Environment variable: AZURE_TOKEN_CREDENTIALS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "AZURE_USERNAME",
+        "description": "Azure username",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "BASH_MAX_OUTPUT_LENGTH",
+        "description": "Environment variable: BASH_MAX_OUTPUT_LENGTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "BEDROCK_BASE_URL",
+        "description": "AWS Bedrock base URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "BETA_TRACING_ENDPOINT",
+        "description": "Environment variable: BETA_TRACING_ENDPOINT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "BROWSER",
+        "description": "Environment variable: BROWSER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "BUILDKITE",
+        "description": "Environment variable: BUILDKITE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "C",
+        "description": "Environment variable: C",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CF_PAGES",
+        "description": "Environment variable: CF_PAGES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CHOKIDAR_INTERVAL",
+        "description": "Environment variable: CHOKIDAR_INTERVAL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CHOKIDAR_USEPOLLING",
+        "description": "Environment variable: CHOKIDAR_USEPOLLING",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CIRCLECI",
+        "description": "Environment variable: CIRCLECI",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUBBIT",
+        "description": "Environment variable: CLAUBBIT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDECODE",
+        "description": "Environment variable: CLAUDECODE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AFTER_LAST_COMPACT",
+        "description": "Environment variable: CLAUDE_AFTER_LAST_COMPACT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AGENT_SDK_CLIENT_APP",
+        "description": "Environment variable: CLAUDE_AGENT_SDK_CLIENT_APP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS",
+        "description": "Environment variable: CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AGENT_SDK_MCP_NO_PREFIX",
+        "description": "Environment variable: CLAUDE_AGENT_SDK_MCP_NO_PREFIX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AGENT_SDK_VERSION",
+        "description": "Environment variable: CLAUDE_AGENT_SDK_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+        "description": "Environment variable: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_AUTO_BACKGROUND_TASKS",
+        "description": "Environment variable: CLAUDE_AUTO_BACKGROUND_TASKS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR",
+        "description": "Environment variable: CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_BRIDGE_USE_CCR_V",
+        "description": "Environment variable: CLAUDE_BRIDGE_USE_CCR_V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CHROME_PERMISSION_MODE",
+        "description": "Environment variable: CLAUDE_CHROME_PERMISSION_MODE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ACCESSIBILITY",
+        "description": "Environment variable: CLAUDE_CODE_ACCESSIBILITY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ACCOUNT_UUID",
+        "description": "Environment variable: CLAUDE_CODE_ACCOUNT_UUID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ACTION",
+        "description": "Action to perform in session",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD",
+        "description": "Environment variable: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ADDITIONAL_PROTECTION",
+        "description": "Environment variable: CLAUDE_CODE_ADDITIONAL_PROTECTION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
+        "description": "Environment variable: CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_API_BASE_URL",
+        "description": "Base URL for Claude Code API",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+        "description": "File descriptor for API key (instead of env var)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+        "description": "Environment variable: CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ATTRIBUTION_HEADER",
+        "description": "Environment variable: CLAUDE_CODE_ATTRIBUTION_HEADER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_AUTO_CONNECT_IDE",
+        "description": "Environment variable: CLAUDE_CODE_AUTO_CONNECT_IDE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_BASE_REF",
+        "description": "Environment variable: CLAUDE_CODE_BASE_REF",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_BASH_SANDBOX_SHOW_INDICATOR",
+        "description": "Environment variable: CLAUDE_CODE_BASH_SANDBOX_SHOW_INDICATOR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE",
+        "description": "Environment variable: CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_BUBBLEWRAP",
+        "description": "Environment variable: CLAUDE_CODE_BUBBLEWRAP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_CLIENT_CERT",
+        "description": "Environment variable: CLAUDE_CODE_CLIENT_CERT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_CLIENT_KEY",
+        "description": "Environment variable: CLAUDE_CODE_CLIENT_KEY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        "description": "Environment variable: CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_CONTAINER_ID",
+        "description": "Container ID for execution environment",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+        "description": "Environment variable: CLAUDE_CODE_CUSTOM_OAUTH_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DATADOG_FLUSH_INTERVAL_MS",
+        "description": "Datadog flush interval",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DEBUG_LOGS_DIR",
+        "description": "Debug logs directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DEBUG_LOG_LEVEL",
+        "description": "Debug log level (debug, info, warn, error)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DIAGNOSTICS_FILE",
+        "description": "Environment variable: CLAUDE_CODE_DIAGNOSTICS_FILE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING",
+        "description": "Disable adaptive thinking",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_ATTACHMENTS",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_ATTACHMENTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+        "description": "Disable automatic memory management",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_CLAUDE_MDS",
+        "description": "Disable CLAUDE.md processing",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_COMMAND_INJECTION_CHECK",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_FAST_MODE",
+        "description": "Disable fast mode optimization",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
+        "description": "Disable feedback survey",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING",
+        "description": "Disable file checkpointing",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+        "description": "Environment variable: CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_THINKING",
+        "description": "Disable extended thinking",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_DONT_INHERIT_ENV",
+        "description": "Environment variable: CLAUDE_CODE_DONT_INHERIT_ENV",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EAGER_FLUSH",
+        "description": "Environment variable: CLAUDE_CODE_EAGER_FLUSH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EFFORT_LEVEL",
+        "description": "Effort level (low, medium, high)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+        "description": "Environment variable: CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_CFC",
+        "description": "Environment variable: CLAUDE_CODE_ENABLE_CFC",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING",
+        "description": "Enable fine-grained tool streaming",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION",
+        "description": "Enable prompt suggestion",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+        "description": "Enable SDK file checkpointing",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_TASKS",
+        "description": "Enable MCP tasks",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_TELEMETRY",
+        "description": "Enable Claude Code telemetry",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENABLE_TOKEN_USAGE_ATTACHMENT",
+        "description": "Environment variable: CLAUDE_CODE_ENABLE_TOKEN_USAGE_ATTACHMENT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+        "description": "Environment variable: CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENTRYPOINT",
+        "description": "Entrypoint for Claude Code",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENVIRONMENT_KIND",
+        "description": "Environment kind (local, remote, etc.)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ENVIRONMENT_RUNNER_VERSION",
+        "description": "Environment variable: CLAUDE_CODE_ENVIRONMENT_RUNNER_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EXIT_AFTER_FIRST_RENDER",
+        "description": "Environment variable: CLAUDE_CODE_EXIT_AFTER_FIRST_RENDER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EXIT_AFTER_STOP_DELAY",
+        "description": "Environment variable: CLAUDE_CODE_EXIT_AFTER_STOP_DELAY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+        "description": "Environment variable: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_EXTRA_BODY",
+        "description": "Environment variable: CLAUDE_CODE_EXTRA_BODY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS",
+        "description": "Environment variable: CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_FORCE_FULL_LOGO",
+        "description": "Environment variable: CLAUDE_CODE_FORCE_FULL_LOGO",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_FORCE_GLOBAL_CACHE",
+        "description": "Environment variable: CLAUDE_CODE_FORCE_GLOBAL_CACHE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_GB_BASE_URL",
+        "description": "Environment variable: CLAUDE_CODE_GB_BASE_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_GIT_BASH_PATH",
+        "description": "Environment variable: CLAUDE_CODE_GIT_BASH_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_GLOB_HIDDEN",
+        "description": "Environment variable: CLAUDE_CODE_GLOB_HIDDEN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_GLOB_NO_IGNORE",
+        "description": "Environment variable: CLAUDE_CODE_GLOB_NO_IGNORE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_GLOB_TIMEOUT_SECONDS",
+        "description": "File glob operation timeout",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_HOST_PLATFORM",
+        "description": "Environment variable: CLAUDE_CODE_HOST_PLATFORM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_IDE_HOST_OVERRIDE",
+        "description": "Override IDE host",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL",
+        "description": "Skip IDE auto-install",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_IDE_SKIP_VALID_CHECK",
+        "description": "Skip IDE validity check",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES",
+        "description": "Environment variable: CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_IS_COWORK",
+        "description": "Environment variable: CLAUDE_CODE_IS_COWORK",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "description": "Maximum output tokens per response",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_MAX_RETRIES",
+        "description": "Maximum retries for API calls",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY",
+        "description": "Maximum concurrent tool calls",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_MCP_INSTR_DELTA",
+        "description": "Environment variable: CLAUDE_CODE_MCP_INSTR_DELTA",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OAUTH_CLIENT_ID",
+        "description": "Environment variable: CLAUDE_CODE_OAUTH_CLIENT_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+        "description": "Environment variable: CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OAUTH_SCOPES",
+        "description": "Environment variable: CLAUDE_CODE_OAUTH_SCOPES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OAUTH_TOKEN",
+        "description": "OAuth token for authentication",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+        "description": "File descriptor for OAuth token",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_ORGANIZATION_UUID",
+        "description": "Environment variable: CLAUDE_CODE_ORGANIZATION_UUID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OTEL_FLUSH_TIMEOUT_MS",
+        "description": "Environment variable: CLAUDE_CODE_OTEL_FLUSH_TIMEOUT_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OTEL_HEADERS_HELPER_DEBOUNCE_MS",
+        "description": "Environment variable: CLAUDE_CODE_OTEL_HEADERS_HELPER_DEBOUNCE_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_OTEL_SHUTDOWN_TIMEOUT_MS",
+        "description": "Environment variable: CLAUDE_CODE_OTEL_SHUTDOWN_TIMEOUT_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PERFETTO_TRACE",
+        "description": "Perfetto trace file path",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE",
+        "description": "Environment variable: CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLAN_MODE_REQUIRED",
+        "description": "Environment variable: CLAUDE_CODE_PLAN_MODE_REQUIRED",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLAN_V",
+        "description": "Environment variable: CLAUDE_CODE_PLAN_V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLUGIN_CACHE_DIR",
+        "description": "Plugin cache directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS",
+        "description": "Environment variable: CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLUGIN_SEED_DIR",
+        "description": "Plugin seed directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE",
+        "description": "Environment variable: CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V",
+        "description": "Environment variable: CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PROFILE_STARTUP",
+        "description": "Environment variable: CLAUDE_CODE_PROFILE_STARTUP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_PROXY_RESOLVES_HOSTS",
+        "description": "Environment variable: CLAUDE_CODE_PROXY_RESOLVES_HOSTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_QUESTION_PREVIEW_FORMAT",
+        "description": "Environment variable: CLAUDE_CODE_QUESTION_PREVIEW_FORMAT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_REMOTE",
+        "description": "Environment variable: CLAUDE_CODE_REMOTE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE",
+        "description": "Environment variable: CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_REMOTE_MEMORY_DIR",
+        "description": "Remote memory directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_REMOTE_SEND_KEEPALIVES",
+        "description": "Send keepalive messages to remote",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_REMOTE_SESSION_ID",
+        "description": "Remote session identifier",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_RESUME_INTERRUPTED_TURN",
+        "description": "Environment variable: CLAUDE_CODE_RESUME_INTERRUPTED_TURN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SAVE_HOOK_ADDITIONAL_CONTEXT",
+        "description": "Environment variable: CLAUDE_CODE_SAVE_HOOK_ADDITIONAL_CONTEXT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SEARCH_HINTS_IN_LIST",
+        "description": "Environment variable: CLAUDE_CODE_SEARCH_HINTS_IN_LIST",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+        "description": "Environment variable: CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SHELL",
+        "description": "Shell to use for bash tool",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SHELL_PREFIX",
+        "description": "Environment variable: CLAUDE_CODE_SHELL_PREFIX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SIMPLE",
+        "description": "Environment variable: CLAUDE_CODE_SIMPLE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "description": "Environment variable: CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+        "description": "Environment variable: CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SKIP_PROMPT_HISTORY",
+        "description": "Environment variable: CLAUDE_CODE_SKIP_PROMPT_HISTORY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+        "description": "Environment variable: CLAUDE_CODE_SKIP_VERTEX_AUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SLOW_OPERATION_THRESHOLD_MS",
+        "description": "Threshold for slow operation warning",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SSE_PORT",
+        "description": "Environment variable: CLAUDE_CODE_SSE_PORT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_STALL_TIMEOUT_MS_FOR_TESTING",
+        "description": "Testing: stall timeout",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_STREAMING_TEXT",
+        "description": "Environment variable: CLAUDE_CODE_STREAMING_TEXT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SUBAGENT_MODEL",
+        "description": "Environment variable: CLAUDE_CODE_SUBAGENT_MODEL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+        "description": "Environment variable: CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS",
+        "description": "Environment variable: CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_SYNTAX_HIGHLIGHT",
+        "description": "Environment variable: CLAUDE_CODE_SYNTAX_HIGHLIGHT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TAGS",
+        "description": "Environment variable: CLAUDE_CODE_TAGS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TASK_LIST_ID",
+        "description": "Environment variable: CLAUDE_CODE_TASK_LIST_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TEST_FIXTURES_ROOT",
+        "description": "Test fixtures root directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TMPDIR",
+        "description": "Temporary directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TMUX_PREFIX",
+        "description": "Environment variable: CLAUDE_CODE_TMUX_PREFIX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TMUX_PREFIX_CONFLICTS",
+        "description": "Environment variable: CLAUDE_CODE_TMUX_PREFIX_CONFLICTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TMUX_SESSION",
+        "description": "Environment variable: CLAUDE_CODE_TMUX_SESSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_TWO_STAGE_CLASSIFIER",
+        "description": "Environment variable: CLAUDE_CODE_TWO_STAGE_CLASSIFIER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USER_EMAIL",
+        "description": "Environment variable: CLAUDE_CODE_USER_EMAIL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_BEDROCK",
+        "description": "Environment variable: CLAUDE_CODE_USE_BEDROCK",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_CCR_V",
+        "description": "Environment variable: CLAUDE_CODE_USE_CCR_V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_COWORK_PLUGINS",
+        "description": "Environment variable: CLAUDE_CODE_USE_COWORK_PLUGINS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_FOUNDRY",
+        "description": "Environment variable: CLAUDE_CODE_USE_FOUNDRY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_NATIVE_FILE_SEARCH",
+        "description": "Environment variable: CLAUDE_CODE_USE_NATIVE_FILE_SEARCH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_USE_VERTEX",
+        "description": "Environment variable: CLAUDE_CODE_USE_VERTEX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+        "description": "File descriptor for WebSocket auth",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CODE_WORKER_EPOCH",
+        "description": "Environment variable: CLAUDE_CODE_WORKER_EPOCH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_CONFIG_DIR",
+        "description": "Environment variable: CLAUDE_CONFIG_DIR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE",
+        "description": "Environment variable: CLAUDE_COWORK_MEMORY_PATH_OVERRIDE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_DEBUG",
+        "description": "Environment variable: CLAUDE_DEBUG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_ENABLE_STREAM_WATCHDOG",
+        "description": "Environment variable: CLAUDE_ENABLE_STREAM_WATCHDOG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_ENV_FILE",
+        "description": "Environment variable: CLAUDE_ENV_FILE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_FORCE_DISPLAY_SURVEY",
+        "description": "Environment variable: CLAUDE_FORCE_DISPLAY_SURVEY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_REPL_MODE",
+        "description": "Environment variable: CLAUDE_REPL_MODE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLAUDE_TMPDIR",
+        "description": "Environment variable: CLAUDE_TMPDIR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLI_WIDTH",
+        "description": "Environment variable: CLI_WIDTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLOUD_ML_REGION",
+        "description": "Google Cloud ML region",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CLOUD_RUN_JOB",
+        "description": "Environment variable: CLOUD_RUN_JOB",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CODESPACES",
+        "description": "Environment variable: CODESPACES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "COLORTERM",
+        "description": "Environment variable: COLORTERM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "COREPACK_ENABLE_AUTO_PIN",
+        "description": "Environment variable: COREPACK_ENABLE_AUTO_PIN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "CURSOR_TRACE_ID",
+        "description": "Environment variable: CURSOR_TRACE_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DEBUG",
+        "description": "Environment variable: DEBUG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DEBUG_AUTH",
+        "description": "Environment variable: DEBUG_AUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DEBUG_SDK",
+        "description": "Environment variable: DEBUG_SDK",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DEMO_VERSION",
+        "description": "Environment variable: DEMO_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DENO_DEPLOYMENT_ID",
+        "description": "Environment variable: DENO_DEPLOYMENT_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DETECT_GCP_RETRIES",
+        "description": "Environment variable: DETECT_GCP_RETRIES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_AUTOUPDATER",
+        "description": "Environment variable: DISABLE_AUTOUPDATER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_AUTO_COMPACT",
+        "description": "Environment variable: DISABLE_AUTO_COMPACT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_AUTO_MIGRATE_TO_NATIVE",
+        "description": "Environment variable: DISABLE_AUTO_MIGRATE_TO_NATIVE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_BUG_COMMAND",
+        "description": "Environment variable: DISABLE_BUG_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_CLAUDE_CODE_SM_COMPACT",
+        "description": "Environment variable: DISABLE_CLAUDE_CODE_SM_COMPACT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_COMPACT",
+        "description": "Environment variable: DISABLE_COMPACT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_COST_WARNINGS",
+        "description": "Environment variable: DISABLE_COST_WARNINGS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_DOCTOR_COMMAND",
+        "description": "Environment variable: DISABLE_DOCTOR_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_ERROR_REPORTING",
+        "description": "Environment variable: DISABLE_ERROR_REPORTING",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_EXTRA_USAGE_COMMAND",
+        "description": "Environment variable: DISABLE_EXTRA_USAGE_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_FEEDBACK_COMMAND",
+        "description": "Environment variable: DISABLE_FEEDBACK_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_INSTALLATION_CHECKS",
+        "description": "Environment variable: DISABLE_INSTALLATION_CHECKS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_INSTALL_GITHUB_APP_COMMAND",
+        "description": "Environment variable: DISABLE_INSTALL_GITHUB_APP_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_INTERLEAVED_THINKING",
+        "description": "Environment variable: DISABLE_INTERLEAVED_THINKING",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_LOGIN_COMMAND",
+        "description": "Environment variable: DISABLE_LOGIN_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_LOGOUT_COMMAND",
+        "description": "Environment variable: DISABLE_LOGOUT_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_PROMPT_CACHING",
+        "description": "Environment variable: DISABLE_PROMPT_CACHING",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_PROMPT_CACHING_HAIKU",
+        "description": "Environment variable: DISABLE_PROMPT_CACHING_HAIKU",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_PROMPT_CACHING_OPUS",
+        "description": "Environment variable: DISABLE_PROMPT_CACHING_OPUS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_PROMPT_CACHING_SONNET",
+        "description": "Environment variable: DISABLE_PROMPT_CACHING_SONNET",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_TELEMETRY",
+        "description": "Environment variable: DISABLE_TELEMETRY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DISABLE_UPGRADE_COMMAND",
+        "description": "Environment variable: DISABLE_UPGRADE_COMMAND",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "DYNO",
+        "description": "Environment variable: DYNO",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "EDITOR",
+        "description": "Default editor command",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "EMBEDDED_SEARCH_TOOLS",
+        "description": "Environment variable: EMBEDDED_SEARCH_TOOLS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_BETA_TRACING_DETAILED",
+        "description": "Environment variable: ENABLE_BETA_TRACING_DETAILED",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_CLAUDEAI_MCP_SERVERS",
+        "description": "Environment variable: ENABLE_CLAUDEAI_MCP_SERVERS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_CLAUDE_CODE_SM_COMPACT",
+        "description": "Environment variable: ENABLE_CLAUDE_CODE_SM_COMPACT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_ENHANCED_TELEMETRY_BETA",
+        "description": "Environment variable: ENABLE_ENHANCED_TELEMETRY_BETA",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_MCP_LARGE_OUTPUT_FILES",
+        "description": "Environment variable: ENABLE_MCP_LARGE_OUTPUT_FILES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_PROMPT_CACHING_",
+        "description": "Environment variable: ENABLE_PROMPT_CACHING_",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ENABLE_TOOL_SEARCH",
+        "description": "Environment variable: ENABLE_TOOL_SEARCH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FALLBACK_FOR_ALL_PRIMARY_MODELS",
+        "description": "Environment variable: FALLBACK_FOR_ALL_PRIMARY_MODELS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FLY_APP_NAME",
+        "description": "Environment variable: FLY_APP_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FLY_MACHINE_ID",
+        "description": "Environment variable: FLY_MACHINE_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FORCE_AUTOUPDATE_PLUGINS",
+        "description": "Environment variable: FORCE_AUTOUPDATE_PLUGINS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FORCE_CODE_TERMINAL",
+        "description": "Environment variable: FORCE_CODE_TERMINAL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FUNCTION_NAME",
+        "description": "Environment variable: FUNCTION_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "FUNCTION_TARGET",
+        "description": "Environment variable: FUNCTION_TARGET",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GAE_MODULE_NAME",
+        "description": "Environment variable: GAE_MODULE_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GAE_SERVICE",
+        "description": "Environment variable: GAE_SERVICE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GCE_METADATA_HOST",
+        "description": "Environment variable: GCE_METADATA_HOST",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GCE_METADATA_IP",
+        "description": "Environment variable: GCE_METADATA_IP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GCLOUD_PROJECT",
+        "description": "GCloud project ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_ACTIONS",
+        "description": "Indicates GitHub Actions environment",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_ACTION_INPUTS",
+        "description": "Environment variable: GITHUB_ACTION_INPUTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_ACTION_PATH",
+        "description": "Environment variable: GITHUB_ACTION_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_ACTOR",
+        "description": "Environment variable: GITHUB_ACTOR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_ACTOR_ID",
+        "description": "Environment variable: GITHUB_ACTOR_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_EVENT_NAME",
+        "description": "Environment variable: GITHUB_EVENT_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_REPOSITORY",
+        "description": "Environment variable: GITHUB_REPOSITORY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_REPOSITORY_ID",
+        "description": "Environment variable: GITHUB_REPOSITORY_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_REPOSITORY_OWNER",
+        "description": "Environment variable: GITHUB_REPOSITORY_OWNER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITHUB_REPOSITORY_OWNER_ID",
+        "description": "Environment variable: GITHUB_REPOSITORY_OWNER_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITLAB_CI",
+        "description": "Indicates GitLab CI environment",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GITPOD_WORKSPACE_ID",
+        "description": "Environment variable: GITPOD_WORKSPACE_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GNOME_TERMINAL_SERVICE",
+        "description": "Environment variable: GNOME_TERMINAL_SERVICE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GOOGLE_APPLICATION_CREDENTIALS",
+        "description": "Path to Google Cloud credentials JSON",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GOOGLE_CLOUD_PROJECT",
+        "description": "Google Cloud project ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GOOGLE_CLOUD_QUOTA_PROJECT",
+        "description": "Environment variable: GOOGLE_CLOUD_QUOTA_PROJECT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRACEFUL_FS_PLATFORM",
+        "description": "Environment variable: GRACEFUL_FS_PLATFORM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+        "description": "Environment variable: GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_EXPERIMENTAL_ENABLE_OUTLIER_DETECTION",
+        "description": "Environment variable: GRPC_EXPERIMENTAL_ENABLE_OUTLIER_DETECTION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_NODE_TRACE",
+        "description": "Environment variable: GRPC_NODE_TRACE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_NODE_USE_ALTERNATIVE_RESOLVER",
+        "description": "Environment variable: GRPC_NODE_USE_ALTERNATIVE_RESOLVER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_NODE_VERBOSITY",
+        "description": "Environment variable: GRPC_NODE_VERBOSITY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_SSL_CIPHER_SUITES",
+        "description": "Environment variable: GRPC_SSL_CIPHER_SUITES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_TRACE",
+        "description": "Environment variable: GRPC_TRACE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "GRPC_VERBOSITY",
+        "description": "Environment variable: GRPC_VERBOSITY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "HOME",
+        "description": "Home directory",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "HTTPS_PROXY",
+        "description": "HTTPS proxy server",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "HTTP_PROXY",
+        "description": "HTTP proxy server",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "IS_DEMO",
+        "description": "Environment variable: IS_DEMO",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "IS_SANDBOX",
+        "description": "Environment variable: IS_SANDBOX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ITERM_SESSION_ID",
+        "description": "Environment variable: ITERM_SESSION_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "JEST_WORKER_ID",
+        "description": "Environment variable: JEST_WORKER_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "KITTY_WINDOW_ID",
+        "description": "Environment variable: KITTY_WINDOW_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "KONSOLE_VERSION",
+        "description": "Environment variable: KONSOLE_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "KUBERNETES_SERVICE_HOST",
+        "description": "Environment variable: KUBERNETES_SERVICE_HOST",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "K_CONFIGURATION",
+        "description": "Environment variable: K_CONFIGURATION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "K_SERVICE",
+        "description": "Environment variable: K_SERVICE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "LOCALAPPDATA",
+        "description": "Environment variable: LOCALAPPDATA",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "LOCAL_BRIDGE",
+        "description": "Environment variable: LOCAL_BRIDGE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MAX_MCP_OUTPUT_TOKENS",
+        "description": "Maximum tokens for MCP output",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MAX_STRUCTURED_OUTPUT_RETRIES",
+        "description": "Environment variable: MAX_STRUCTURED_OUTPUT_RETRIES",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MAX_THINKING_TOKENS",
+        "description": "Environment variable: MAX_THINKING_TOKENS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_CLIENT_SECRET",
+        "description": "Environment variable: MCP_CLIENT_SECRET",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_CONNECTION_NONBLOCKING",
+        "description": "Environment variable: MCP_CONNECTION_NONBLOCKING",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_OAUTH_CALLBACK_PORT",
+        "description": "Environment variable: MCP_OAUTH_CALLBACK_PORT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_REMOTE_SERVER_CONNECTION_BATCH_SIZE",
+        "description": "MCP remote server batch size",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_SERVER_CONNECTION_BATCH_SIZE",
+        "description": "MCP server connection batch size",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_TIMEOUT",
+        "description": "MCP operation timeout",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MCP_TOOL_TIMEOUT",
+        "description": "MCP tool execution timeout",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "METADATA_SERVER_DETECTION",
+        "description": "Environment variable: METADATA_SERVER_DETECTION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MODIFIERS_NODE_PATH",
+        "description": "Environment variable: MODIFIERS_NODE_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "MSYSTEM",
+        "description": "Environment variable: MSYSTEM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "N",
+        "description": "Environment variable: N",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NETLIFY",
+        "description": "Environment variable: NETLIFY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NODE_DEBUG",
+        "description": "Node.js debug topics",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NODE_EXTRA_CA_CERTS",
+        "description": "Additional CA certificates for Node.js",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NODE_OPTIONS",
+        "description": "Node.js command-line options",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NODE_V",
+        "description": "Environment variable: NODE_V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "NO_PROXY",
+        "description": "No proxy hosts",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OSTYPE",
+        "description": "Environment variable: OSTYPE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "description": "OpenTelemetry OTLP exporter endpoint",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_HEADERS",
+        "description": "OpenTelemetry OTLP headers",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_INSECURE",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_INSECURE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_PROTOCOL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "description": "Environment variable: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_PROMETHEUS_HOST",
+        "description": "Environment variable: OTEL_EXPORTER_PROMETHEUS_HOST",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_EXPORTER_PROMETHEUS_PORT",
+        "description": "Environment variable: OTEL_EXPORTER_PROMETHEUS_PORT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_LOGS_EXPORTER",
+        "description": "Environment variable: OTEL_LOGS_EXPORTER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_LOGS_EXPORT_INTERVAL",
+        "description": "Environment variable: OTEL_LOGS_EXPORT_INTERVAL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_LOG_TOOL_CONTENT",
+        "description": "Environment variable: OTEL_LOG_TOOL_CONTENT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_LOG_TOOL_DETAILS",
+        "description": "Environment variable: OTEL_LOG_TOOL_DETAILS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_LOG_USER_PROMPTS",
+        "description": "Environment variable: OTEL_LOG_USER_PROMPTS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_METRICS_EXPORTER",
+        "description": "Environment variable: OTEL_METRICS_EXPORTER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_METRIC_EXPORT_INTERVAL",
+        "description": "Environment variable: OTEL_METRIC_EXPORT_INTERVAL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_TRACES_EXPORTER",
+        "description": "Environment variable: OTEL_TRACES_EXPORTER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "OTEL_TRACES_EXPORT_INTERVAL",
+        "description": "Environment variable: OTEL_TRACES_EXPORT_INTERVAL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "P",
+        "description": "Environment variable: P",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "PATH",
+        "description": "System PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "PATHEXT",
+        "description": "Environment variable: PATHEXT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "PKG_CONFIG_PATH",
+        "description": "Environment variable: PKG_CONFIG_PATH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "PROJECT_DOMAIN",
+        "description": "Environment variable: PROJECT_DOMAIN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "PWD",
+        "description": "Environment variable: PWD",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "RAILWAY_ENVIRONMENT_NAME",
+        "description": "Environment variable: RAILWAY_ENVIRONMENT_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "RAILWAY_SERVICE_NAME",
+        "description": "Environment variable: RAILWAY_SERVICE_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "RENDER",
+        "description": "Environment variable: RENDER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "REPL_ID",
+        "description": "Environment variable: REPL_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "REPL_SLUG",
+        "description": "Environment variable: REPL_SLUG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "RUNNER_ENVIRONMENT",
+        "description": "Environment variable: RUNNER_ENVIRONMENT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "RUNNER_OS",
+        "description": "Environment variable: RUNNER_OS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "S",
+        "description": "Environment variable: S",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SAFEUSER",
+        "description": "Environment variable: SAFEUSER",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SESSIONNAME",
+        "description": "Environment variable: SESSIONNAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SESSION_INGRESS_URL",
+        "description": "Environment variable: SESSION_INGRESS_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SHARP_FORCE_GLOBAL_LIBVIPS",
+        "description": "Environment variable: SHARP_FORCE_GLOBAL_LIBVIPS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SHARP_IGNORE_GLOBAL_LIBVIPS",
+        "description": "Environment variable: SHARP_IGNORE_GLOBAL_LIBVIPS",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SHELL",
+        "description": "Current shell",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SLASH_COMMAND_TOOL_CHAR_BUDGET",
+        "description": "Environment variable: SLASH_COMMAND_TOOL_CHAR_BUDGET",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SPACE_CREATOR_USER_ID",
+        "description": "Environment variable: SPACE_CREATOR_USER_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SRT_DEBUG",
+        "description": "Environment variable: SRT_DEBUG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SSH_CLIENT",
+        "description": "SSH client info (from server)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SSH_CONNECTION",
+        "description": "Environment variable: SSH_CONNECTION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SSH_TTY",
+        "description": "SSH terminal (from server)",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "STY",
+        "description": "Environment variable: STY",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SWE_BENCH_INSTANCE_ID",
+        "description": "Environment variable: SWE_BENCH_INSTANCE_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SWE_BENCH_RUN_ID",
+        "description": "Environment variable: SWE_BENCH_RUN_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SWE_BENCH_TASK_ID",
+        "description": "Environment variable: SWE_BENCH_TASK_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SYSTEMROOT",
+        "description": "Environment variable: SYSTEMROOT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "SYSTEM_OIDCREQUESTURI",
+        "description": "Environment variable: SYSTEM_OIDCREQUESTURI",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TASK_MAX_OUTPUT_LENGTH",
+        "description": "Environment variable: TASK_MAX_OUTPUT_LENGTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TEAM_MEMORY_SYNC_URL",
+        "description": "Environment variable: TEAM_MEMORY_SYNC_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TEMP",
+        "description": "Environment variable: TEMP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TERM",
+        "description": "Terminal type",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TERMINAL_EMULATOR",
+        "description": "Environment variable: TERMINAL_EMULATOR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TERMINATOR_UUID",
+        "description": "Environment variable: TERMINATOR_UUID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TERM_PROGRAM",
+        "description": "Environment variable: TERM_PROGRAM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TERM_PROGRAM_VERSION",
+        "description": "Environment variable: TERM_PROGRAM_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TEST_ENABLE_SESSION_PERSISTENCE",
+        "description": "Environment variable: TEST_ENABLE_SESSION_PERSISTENCE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TEST_GRACEFUL_FS_GLOBAL_PATCH",
+        "description": "Environment variable: TEST_GRACEFUL_FS_GLOBAL_PATCH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TILIX_ID",
+        "description": "Environment variable: TILIX_ID",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TMPDIR",
+        "description": "Environment variable: TMPDIR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TMUX",
+        "description": "Environment variable: TMUX",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "TMUX_PANE",
+        "description": "Environment variable: TMUX_PANE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "UNDICI_NO_FG",
+        "description": "Environment variable: UNDICI_NO_FG",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USER",
+        "description": "Current user name",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USERNAME",
+        "description": "Environment variable: USERNAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USERPROFILE",
+        "description": "Environment variable: USERPROFILE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USE_API_CONTEXT_MANAGEMENT",
+        "description": "Environment variable: USE_API_CONTEXT_MANAGEMENT",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USE_BUILTIN_RIPGREP",
+        "description": "Environment variable: USE_BUILTIN_RIPGREP",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USE_LOCAL_OAUTH",
+        "description": "Environment variable: USE_LOCAL_OAUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "USE_STAGING_OAUTH",
+        "description": "Environment variable: USE_STAGING_OAUTH",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "UV_THREADPOOL_SIZE",
+        "description": "Environment variable: UV_THREADPOOL_SIZE",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "V",
+        "description": "Environment variable: V",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VCR_RECORD",
+        "description": "Environment variable: VCR_RECORD",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VERCEL",
+        "description": "Environment variable: VERCEL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VERTEX_BASE_URL",
+        "description": "Environment variable: VERTEX_BASE_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VISUAL",
+        "description": "Default visual editor",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VOICE_STREAM_BASE_URL",
+        "description": "Environment variable: VOICE_STREAM_BASE_URL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VSCODE_GIT_ASKPASS_MAIN",
+        "description": "Environment variable: VSCODE_GIT_ASKPASS_MAIN",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "VTE_VERSION",
+        "description": "Environment variable: VTE_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WEBSITE_SITE_NAME",
+        "description": "Environment variable: WEBSITE_SITE_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WEBSITE_SKU",
+        "description": "Environment variable: WEBSITE_SKU",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WSL_DISTRO_NAME",
+        "description": "Environment variable: WSL_DISTRO_NAME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WS_NO_BUFFER_UTIL",
+        "description": "Environment variable: WS_NO_BUFFER_UTIL",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WS_NO_UTF_",
+        "description": "Environment variable: WS_NO_UTF_",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "WT_SESSION",
+        "description": "Environment variable: WT_SESSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "XDG_CONFIG_HOME",
+        "description": "Environment variable: XDG_CONFIG_HOME",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "XDG_RUNTIME_DIR",
+        "description": "Environment variable: XDG_RUNTIME_DIR",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "XTERM_VERSION",
+        "description": "Environment variable: XTERM_VERSION",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "ZED_TERM",
+        "description": "Environment variable: ZED_TERM",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      },
+      {
+        "name": "__CFB",
+        "description": "Environment variable: __CFB",
+        "line": null,
+        "usage": null,
+        "source": "cli.js-grep"
+      }
+    ],
+    "summary": {
+      "total_vars": 430,
+      "categories": {
+        "authentication": 34,
+        "claude_code_config": 141,
+        "cloud_providers": 39,
+        "system_environment": 5
+      }
+    }
+  },
+  "error": null
+}
