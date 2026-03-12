@@ -771,6 +771,90 @@ _show_version() {
 
 # --- NESTED_LOA Warrant Functions ---
 
+# Validate a warrant from a parent agent
+# Usage: _validate_warrant <warrant_file>
+# Returns: JSON with {status: VALID|INVALID|EXPIRED, reason: ...}
+_validate_warrant() {
+  local warrant_file="$1"
+
+  if [[ ! -f "$warrant_file" ]]; then
+    python3 << 'PYJSON'
+import json
+print(json.dumps({
+    "type": "warrant-validation",
+    "status": "INVALID",
+    "reason": "Warrant file not found"
+}))
+PYJSON
+    return 1
+  fi
+
+  # Validate warrant JSON and fields
+  WARRANT_FILE="$warrant_file" python3 << 'PYJSON'
+import json
+import os
+from datetime import datetime, timezone
+
+warrant_file = os.environ.get("WARRANT_FILE", "")
+
+try:
+  with open(warrant_file, 'r') as f:
+    warrant = json.load(f)
+except json.JSONDecodeError:
+  print(json.dumps({
+      "type": "warrant-validation",
+      "status": "INVALID",
+      "reason": "Warrant is not valid JSON"
+  }))
+  sys.exit(1)
+
+# Check required fields
+required_fields = ["warrant_id", "parent_uuid", "child_uuid", "proposed_loa_cap", "expires_at", "parent_loa_cap"]
+missing = [f for f in required_fields if f not in warrant]
+if missing:
+  print(json.dumps({
+      "type": "warrant-validation",
+      "status": "INVALID",
+      "reason": f"Missing required fields: {', '.join(missing)}"
+  }))
+  sys.exit(1)
+
+# Check expiration
+expires_at = datetime.fromisoformat(warrant["expires_at"].replace("Z", "+00:00"))
+now = datetime.now(timezone.utc)
+if now > expires_at:
+  print(json.dumps({
+      "type": "warrant-validation",
+      "status": "EXPIRED",
+      "reason": f"Warrant expired at {warrant['expires_at']}"
+  }))
+  sys.exit(0)
+
+# Validate LOA hierarchy
+if warrant["proposed_loa_cap"] > warrant["parent_loa_cap"]:
+  print(json.dumps({
+      "type": "warrant-validation",
+      "status": "INVALID",
+      "reason": f"Proposed LOA_CAP {warrant['proposed_loa_cap']} exceeds parent LOA_CAP {warrant['parent_loa_cap']}"
+  }))
+  sys.exit(0)
+
+# Warranty is valid
+print(json.dumps({
+    "type": "warrant-validation",
+    "status": "VALID",
+    "warrant_id": warrant["warrant_id"],
+    "parent_uuid": warrant["parent_uuid"],
+    "child_uuid": warrant["child_uuid"],
+    "proposed_loa_cap": warrant["proposed_loa_cap"],
+    "parent_loa_cap": warrant["parent_loa_cap"],
+    "task_description": warrant.get("task_description", ""),
+    "expires_at": warrant["expires_at"],
+    "reason": "Warrant is valid and not expired"
+}))
+PYJSON
+}
+
 # Create a warrant for delegating autonomy to a child agent
 # Usage: _create_warrant <child_uuid> <task_description> <proposed_loa_cap> <trust_score> [time_limit_secs]
 _create_warrant() {
@@ -982,6 +1066,19 @@ main() {
 
       _check_agents_md "delegate" || _log "WARNING: AGENTS.md authorization check failed for delegate"
       _create_warrant "$child_uuid" "$task" "$proposed_loa" "$trust_score" "$time_limit"
+      ;;
+
+    --validate-warrant)
+      # NESTED_LOA: Validate a warrant file
+      # Usage: qlaude --validate-warrant <warrant_file>
+      local warrant_file="${2:-}"
+      [[ -n "$warrant_file" ]] || _error "--validate-warrant requires a warrant file path"
+
+      if [[ ! -f "$warrant_file" ]]; then
+        _error "Warrant file not found: $warrant_file"
+      fi
+
+      _validate_warrant "$warrant_file"
       ;;
 
     "")
