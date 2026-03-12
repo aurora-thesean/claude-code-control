@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# qfd-trace — Aurora Claude Code File Descriptor Tracer
+#
+# Parse /proc/{PID}/fd and /proc/{PID}/fdinfo to emit JSON showing all open files,
+# sockets, pipes for a given PID. Identify JSONL writes in real-time.
+#
+# Usage:
+#   qfd-trace [PID]
+#   qfd-trace                    # default: detect Claude Code PID
+#   qfd-trace $$                 # trace current shell
+#   qfd-trace 12345              # trace specific PID
+#
+# Output: JSON on stdout
+# Errors: JSON on stderr with "error" field set
+#
+# Exit codes: 0=success, 1=PID not found/accessible, 2=usage error, 3=invalid PID
+
+set -euo pipefail
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────────
+
+# Convert octal flags from /proc/PID/fdinfo to human-readable flags
+flags_to_string() {
+    local flags_octal="$1"
+    local flags_int=$((8#$flags_octal))  # convert octal to decimal
+    local flag_str=""
+
+    # Extract access mode (bits 0-1)
+    local access=$((flags_int & 0x03))
+    case $access in
+        0) flag_str="O_RDONLY" ;;
+        1) flag_str="O_WRONLY" ;;
+        2) flag_str="O_RDWR" ;;
+    esac
+
+    # Extract other flags
+    if (( (flags_int & 0x400) )); then flag_str="$flag_str|O_CREAT"; fi
+    if (( (flags_int & 0x800) )); then flag_str="$flag_str|O_EXCL"; fi
+    if (( (flags_int & 0x1000) )); then flag_str="$flag_str|O_NOCTTY"; fi
+    if (( (flags_int & 0x2000) )); then flag_str="$flag_str|O_TRUNC"; fi
+    if (( (flags_int & 0x4000) )); then flag_str="$flag_str|O_APPEND"; fi
+    if (( (flags_int & 0x8000) )); then flag_str="$flag_str|O_NONBLOCK"; fi
+    if (( (flags_int & 0x20000) )); then flag_str="$flag_str|O_SYNC"; fi
+    if (( (flags_int & 0x100000) )); then flag_str="$flag_str|O_DIRECT"; fi
+    if (( (flags_int & 0x200000) )); then flag_str="$flag_str|O_LARGEFILE"; fi
+
+    echo "$flag_str"
+}
+
+# Determine file type from /proc/PID/fd/N symlink target
+determine_type() {
+    local target="$1"
+
+    case "$target" in
+        socket:*) echo "SOCK" ;;
+        pipe:*) echo "PIPE" ;;
+        anon_inode:*) echo "UNKNOWN" ;;
+        */)  echo "DIR" ;;
+        /dev/null|/dev/zero|/dev/full|/dev/random|/dev/urandom)
+            echo "CHR" ;;
+        /dev/*)
+            echo "CHR" ;;
+        *)
+            # Try to stat the target if it exists
+            if [[ -e "$target" ]]; then
+                if [[ -d "$target" ]]; then
+                    echo "DIR"
+                elif [[ -b "$target" ]]; then
+                    echo "BLK"
+                elif [[ -c "$target" ]]; then
+                    echo "CHR"
+                elif [[ -f "$target" ]]; then
+                    echo "REG"
+                elif [[ -p "$target" ]]; then
+                    echo "FIFO"
+                elif [[ -L "$target" ]]; then
+                    echo "LNK"
+                else
+                    echo "UNKNOWN"
+                fi
+            else
+                echo "UNKNOWN"
+            fi
+            ;;
+    esac
+}
+
+# Emit error JSON to stderr
+error_json() {
+    local message="$1"
+    local exit_code="$2"
+
+    printf '{
+  "type": "sensor",
+  "timestamp": "%s",
+  "unit": "4",
+  "data": null,
+  "source": "GROUND_TRUTH",
+  "error": "%s"
+}' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$message" >&2
+    exit "$exit_code"
+}
+
+# Emit object as JSON with proper escaping
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# ─── MAIN LOGIC ───────────────────────────────────────────────
+
+# Determine PID
+PID=""
+if [[ $# -gt 0 ]]; then
+    PID="$1"
+fi
+
+if [[ -z "$PID" ]]; then
+    # Auto-detect Claude Code PID
+    PID=$(pgrep -f "claude" | head -1 2>/dev/null || true)
+    if [[ -z "$PID" ]]; then
+        error_json "No Claude Code process found (pgrep -f claude returned nothing)" 1
+    fi
+fi
+
+# Validate PID is numeric
+if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
+    error_json "Invalid PID: '$PID' (must be numeric)" 2
+fi
+
+# Check if PID exists and we can read its fd directory
+if ! [[ -d "/proc/$PID" ]]; then
+    error_json "PID $PID does not exist" 1
+fi
+
+if ! [[ -r "/proc/$PID/fd" ]]; then
+    error_json "Cannot read /proc/$PID/fd (permission denied)" 1
+fi
+
+# Collect file descriptors and build JSON output directly
+# Using printf to avoid jq performance bottleneck
+timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+printf '{\n  "type": "sensor",\n  "timestamp": "%s",\n  "unit": "4",\n  "data": {\n    "pid": %s,\n    "file_descriptors": [\n' "$timestamp" "$PID"
+
+first=1
+
+# Iterate through /proc/PID/fd directory
+for fd_entry in /proc/$PID/fd/*; do
+    [[ ! -L "$fd_entry" ]] && continue
+
+    fd_num=$(basename "$fd_entry")
+
+    # Read the symlink target
+    target=$(readlink "$fd_entry" 2>/dev/null || continue)
+    [[ -z "$target" ]] && continue
+
+    # Determine file type
+    file_type=$(determine_type "$target")
+
+    # Read flags from fdinfo if available
+    flags_str=""
+    if [[ -r "/proc/$PID/fdinfo/$fd_num" ]]; then
+        flags_octal=$(grep "^flags:" "/proc/$PID/fdinfo/$fd_num" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ -n "$flags_octal" ]]; then
+            flags_str=$(flags_to_string "$flags_octal")
+        fi
+    fi
+
+    # Emit JSON object for this FD
+    [[ $first -eq 0 ]] && printf ','
+    printf '\n      {\n        "fd": %s,\n        "type": "%s",\n        "path": "%s"' \
+        "$fd_num" "$file_type" "$(json_escape "$target")"
+
+    if [[ -n "$flags_str" ]]; then
+        printf ',\n        "flags": "%s"' "$(json_escape "$flags_str")"
+    else
+        printf ',\n        "flags": null'
+    fi
+
+    printf '\n      }'
+    first=0
+done
+
+# Close the JSON structure
+printf '\n    ]\n  },\n  "source": "GROUND_TRUTH",\n  "error": null\n}\n'
+exit 0

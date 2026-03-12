@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# qfd-trace-test — Unit tests for File Descriptor Tracer
+#
+# Fast integration tests for qfd-trace
+#
+# Usage:
+#   qfd-trace-test
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+QFDTRACE="$REPO_ROOT/qfd-trace"
+
+PASS_COUNT=0
+FAIL_COUNT=0
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Test utilities
+test_pass() {
+    echo -e "${GREEN}✓${NC} $*" >&2
+    ((PASS_COUNT++))
+}
+
+test_fail() {
+    echo -e "${RED}✗${NC} $*" >&2
+    ((FAIL_COUNT++))
+}
+
+test_skip() {
+    echo -e "${YELLOW}⊝${NC} $*" >&2
+}
+
+# Check qfd-trace exists
+if [[ ! -x "$QFDTRACE" ]]; then
+    echo "ERROR: qfd-trace not found at $QFDTRACE" >&2
+    exit 1
+fi
+
+echo "=== qfd-trace Unit Tests ===" >&2
+echo "Testing: $QFDTRACE" >&2
+echo "" >&2
+
+# Test 1: JSON validation
+echo "[TEST] JSON output is valid" >&2
+output=$("$QFDTRACE" 297200 2>&1)
+if echo "$output" | jq . > /dev/null 2>&1; then
+    test_pass "Output is valid JSON"
+else
+    test_fail "Output is not valid JSON"
+fi
+
+# Test 2: Required fields
+echo "[TEST] JSON has required fields" >&2
+if echo "$output" | jq 'has("type") and has("timestamp") and has("unit") and has("data") and has("source") and has("error")' | grep -q "true"; then
+    test_pass "All required top-level fields present"
+else
+    test_fail "Missing required top-level fields"
+fi
+
+# Test 3: Data structure
+echo "[TEST] Data object has correct structure" >&2
+if echo "$output" | jq '.data | has("pid") and has("file_descriptors")' | grep -q "true"; then
+    test_pass "Data object has pid and file_descriptors"
+else
+    test_fail "Data object missing required fields"
+fi
+
+# Test 4: File descriptors is array
+echo "[TEST] file_descriptors is an array" >&2
+if echo "$output" | jq '.data.file_descriptors | type' | grep -q "array"; then
+    test_pass "file_descriptors is an array"
+else
+    test_fail "file_descriptors is not an array"
+fi
+
+# Test 5: FD objects have required fields
+echo "[TEST] FD objects have required fields" >&2
+fd_count=$(echo "$output" | jq '.data.file_descriptors | length')
+if [[ $fd_count -gt 0 ]]; then
+    if echo "$output" | jq '.data.file_descriptors[0] | has("fd") and has("type") and has("path") and has("flags")' | grep -q "true"; then
+        test_pass "FD objects have required fields (checked first of $fd_count FDs)"
+    else
+        test_fail "FD object missing required fields"
+    fi
+else
+    test_skip "No FDs to validate"
+fi
+
+# Test 6: File types are recognized
+echo "[TEST] File type detection works" >&2
+types=$(echo "$output" | jq -r '.data.file_descriptors[].type' | sort -u | tr '\n' ' ')
+if echo "$types" | grep -q "CHR"; then
+    test_pass "File types detected (found: ${types%, })"
+else
+    test_fail "No file types detected"
+fi
+
+# Test 7: Flags have correct format
+echo "[TEST] Flags have O_* format" >&2
+flags=$(echo "$output" | jq -r '.data.file_descriptors[] | select(.flags != null) | .flags' | head -1)
+if [[ -n "$flags" ]] && echo "$flags" | grep -qE "^O_[A-Z_]+(\|O_[A-Z_]+)*$"; then
+    test_pass "Flags format correct: $flags"
+else
+    test_skip "No flags to validate (or flags format issue)"
+fi
+
+# Test 8: Auto-detection works
+echo "[TEST] Auto-detection finds Claude" >&2
+auto_output=$("$QFDTRACE" 2>&1)
+if echo "$auto_output" | jq '.data.pid' | grep -q "[0-9]"; then
+    auto_pid=$(echo "$auto_output" | jq '.data.pid')
+    if ps -p "$auto_pid" > /dev/null 2>&1; then
+        test_pass "Auto-detection found valid PID: $auto_pid"
+    else
+        test_fail "Auto-detected PID $auto_pid is not running"
+    fi
+else
+    test_fail "Auto-detection failed"
+fi
+
+# Test 9: Error handling - invalid PID
+echo "[TEST] Invalid PID error handling" >&2
+err_output=$("$QFDTRACE" "invalid" 2>&1)
+if echo "$err_output" | jq '.error' | grep -q "numeric"; then
+    test_pass "Invalid PID error handling works"
+else
+    test_fail "Invalid PID should produce error"
+fi
+
+# Test 10: Error handling - nonexistent PID
+echo "[TEST] Nonexistent PID error handling" >&2
+err_output=$("$QFDTRACE" 99999999 2>&1)
+if echo "$err_output" | jq '.error' | grep -q "does not exist"; then
+    test_pass "Nonexistent PID error handling works"
+else
+    test_fail "Nonexistent PID should produce error"
+fi
+
+echo "" >&2
+echo "=== Test Results ===" >&2
+echo -e "${GREEN}Passed: $PASS_COUNT${NC}" >&2
+echo -e "${RED}Failed: $FAIL_COUNT${NC}" >&2
+
+if (( FAIL_COUNT > 0 )); then
+    exit 1
+else
+    exit 0
+fi

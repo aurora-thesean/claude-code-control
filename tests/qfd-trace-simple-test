@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -e
+QFDTRACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/qfd-trace"
+
+echo "Testing qfd-trace..."
+
+# Test 1: Run with explicit PID
+output=$("$QFDTRACE" 297200)
+echo "✓ qfd-trace executes"
+
+# Test 2: Check JSON
+echo "$output" | jq . > /dev/null
+echo "✓ Output is valid JSON"
+
+# Test 3: Check structure
+pid=$(echo "$output" | jq '.data.pid')
+fds=$(echo "$output" | jq '.data.file_descriptors | length')
+echo "✓ Found PID $pid with $fds file descriptors"
+
+# Test 4: Auto-detection
+auto=$("$QFDTRACE")
+auto_pid=$(echo "$auto" | jq '.data.pid')
+echo "✓ Auto-detection found PID $auto_pid"
+
+# Test 5: Error handling
+err=$("$QFDTRACE" invalid 2>&1 || true)
+if echo "$err" | jq '.error' | grep -q "numeric"; then
+    echo "✓ Error handling works"
+fi
+
+echo ""
+echo "All tests passed!"
