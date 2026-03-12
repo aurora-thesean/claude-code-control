@@ -181,6 +181,58 @@ _test_qhoami_current_session() {
 }
 
 # ============================================================================
+# SCENARIO 4: qtail-jsonl Real-Time JSONL Tail Daemon
+# ============================================================================
+
+_setup_jsonl_monitoring() {
+  local home="$1"
+  # Create a test JSONL file with initial records
+  local test_jsonl="$home/.claude/test.jsonl"
+  mkdir -p "$home/.claude"
+  cat > "$test_jsonl" << 'JSONL'
+{"type":"message","sessionId":"test-001","timestamp":"2026-03-11T12:00:00Z","content":"first record"}
+{"type":"message","sessionId":"test-001","timestamp":"2026-03-11T12:00:01Z","content":"second record"}
+JSONL
+}
+
+_test_qtail_jsonl_startup() {
+  local home="$1"
+  local test_jsonl="$home/.claude/test.jsonl"
+
+  _test "qtail-jsonl: reads initial records on startup" \
+    "timeout 2 /home/aurora/repo-staging/claude-code-control/qtail-jsonl '$test_jsonl' 2>&1 | wc -l | grep -E '[2-9]'" \
+    "[2-9]"
+
+  _test "qtail-jsonl: emits valid JSON" \
+    "timeout 2 /home/aurora/repo-staging/claude-code-control/qtail-jsonl '$test_jsonl' 2>&1 | head -1 | jq empty" \
+    ""
+
+  _test "qtail-jsonl: JSON includes type field" \
+    "timeout 2 /home/aurora/repo-staging/claude-code-control/qtail-jsonl '$test_jsonl' 2>&1 | head -1 | jq -r '.type'" \
+    "tail-record"
+
+  _test "qtail-jsonl: JSON includes GROUND_TRUTH source" \
+    "timeout 2 /home/aurora/repo-staging/claude-code-control/qtail-jsonl '$test_jsonl' 2>&1 | head -1 | jq -r '.source'" \
+    "GROUND_TRUTH"
+
+  _test "qtail-jsonl: JSON includes data.record_from_jsonl" \
+    "timeout 2 /home/aurora/repo-staging/claude-code-control/qtail-jsonl '$test_jsonl' 2>&1 | head -1 | jq -r '.data.record_from_jsonl.type'" \
+    "message"
+}
+
+_test_qtail_jsonl_errors() {
+  local home="$1"
+
+  _test "qtail-jsonl: rejects missing file" \
+    "/home/aurora/repo-staging/claude-code-control/qtail-jsonl /nonexistent/file.jsonl 2>&1" \
+    "File not found"
+
+  _test "qtail-jsonl: rejects no arguments" \
+    "/home/aurora/repo-staging/claude-code-control/qtail-jsonl 2>&1" \
+    "Usage:"
+}
+
+# ============================================================================
 # RUN ALL SCENARIOS
 # ============================================================================
 
@@ -194,6 +246,8 @@ _test_scenario "QC0_HUMAN_ONLY Gates" _setup_qc0 _test_qc0_gates
 _test_scenario "QC1_SUPERVISED_LOOP Gates" _setup_qc1 _test_qc1_gates
 _test_scenario "QC2_FULLY_AUTONOMOUS Gates" _setup_qc2 _test_qc2_gates
 _test_scenario "Task Queue End-to-End" _setup_task_queue _test_queue_consumer
+_test_scenario "qtail-jsonl Startup & Parsing" _setup_jsonl_monitoring _test_qtail_jsonl_startup
+_test_scenario "qtail-jsonl Error Handling" _setup_jsonl_monitoring _test_qtail_jsonl_errors
 
 echo ""
 echo "=== qhoami Ground Truth (current session) ==="
