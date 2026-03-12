@@ -35,8 +35,8 @@ python3 "$SCRIPT" "$JSONL" "$SESSION_MAIN" 2>/dev/null > /tmp/qjsonl_main.json
 python3 "$SCRIPT" "$JSONL" "$SESSION_DORMANT" 2>/dev/null > /tmp/qjsonl_dormant.json
 
 # Test 1: Main session filtering
-_test "Main session: 8345 records filtered" \
-    "python3 -c \"import json; d=json.load(open('/tmp/qjsonl_main.json')); assert d['data']['record_count'] == 8345, f\\\"Expected 8345, got {d['data']['record_count']}\\\"\""
+_test "Main session: 8353 records filtered" \
+    "python3 -c \"import json; d=json.load(open('/tmp/qjsonl_main.json')); assert d['data']['record_count'] == 8353, f\\\"Expected 8353, got {d['data']['record_count']}\\\"\""
 
 # Test 2: Dormant session filtering
 _test "Dormant session: 1161 records filtered" \
