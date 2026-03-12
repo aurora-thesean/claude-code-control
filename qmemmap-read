@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# qmemmap-read — Aurora Claude Code Memory Map Inspector
+#
+# Parse /proc/{PID}/maps to show memory layout (heap, stack, mmap regions).
+# Correlate with symbols from cli.js binary. Categorize regions by type.
+# Provide LD_PRELOAD placement strategy recommendations.
+#
+# Usage:
+#   qmemmap-read [PID]
+#   qmemmap-read                    # default: detect Claude Code PID
+#   qmemmap-read $$                 # inspect current shell
+#   qmemmap-read 12345              # inspect specific PID
+#
+# Output: JSON on stdout with memory regions, categorization, and recommendations
+# Errors: JSON on stderr with "error" field set
+#
+# Exit codes: 0=success, 1=PID not found/accessible, 2=usage error, 3=invalid PID
+
+set -euo pipefail
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────────
+
+# JSON escape function (bash-native)
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    echo "$s"
+}
+
+# Emit error JSON to stderr
+error_json() {
+    local code="$1"
+    local msg="$2"
+    cat >&2 <<EOF
+{
+  "type": "memory-analysis",
+  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "unit": "12",
+  "data": null,
+  "source": "GROUND_TRUTH",
+  "error": "$(json_escape "$msg")",
+  "error_code": $code
+}
+EOF
+}
+
+# Categorize a region based on path and permissions
+categorize_region() {
+    local path="$1"
+    local perms="$2"
+
+    if [[ "$path" == "[heap]" ]]; then
+        echo "HEAP"
+    elif [[ "$path" == "[stack]" ]]; then
+        echo "STACK"
+    elif [[ "$path" == "[vdso]" ]]; then
+        echo "VDSO"
+    elif [[ "$path" == "[vvar]" ]]; then
+        echo "VVAR"
+    elif [[ "$path" == "[vsyscall]" ]]; then
+        echo "VSYSCALL"
+    elif [[ "$path" =~ \[anon\] ]]; then
+        echo "ANONYMOUS"
+    elif [[ -z "$path" ]]; then
+        echo "ANONYMOUS"
+    elif [[ "$path" =~ \.so ]]; then
+        if [[ "$perms" == r-xp ]]; then
+            echo "LIBRARY_TEXT"
+        else
+            echo "LIBRARY_DATA"
+        fi
+    elif [[ "$perms" == r-xp ]] || [[ "$perms" == r-x* ]]; then
+        echo "TEXT_SEGMENT"
+    elif [[ "$perms" == rw* ]]; then
+        echo "DATA_SEGMENT"
+    elif [[ "$perms" == r--* ]]; then
+        echo "RODATA_SEGMENT"
+    else
+        echo "OTHER"
+    fi
+}
+
+# Detect if this is likely the main binary
+is_main_binary() {
+    local path="$1"
+
+    if [[ -z "$path" ]]; then
+        return 1
+    fi
+
+    if [[ "$path" =~ cli\.js$ ]]; then
+        return 0
+    fi
+
+    if [[ "$path" =~ /node$ ]]; then
+        return 0
+    fi
+
+    if [[ "$path" =~ node_modules ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Find libc location from /proc/{PID}/maps
+find_libc_location() {
+    local pid="$1"
+    local maps_file="/proc/$pid/maps"
+
+    if [[ ! -r "$maps_file" ]]; then
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ libc\.so ]]; then
+            local addr_range="${line%% *}"
+            echo "0x${addr_range%-*}"
+            return 0
+        fi
+    done < "$maps_file"
+
+    return 1
+}
+
+# Check if a path exists and is readable
+path_exists() {
+    local path="$1"
+    [[ -e "$path" ]] && return 0 || return 1
+}
+
+# ─── MAIN LOGIC ─────────────────────────────────────────────────
+
+main() {
+    local pid="${1:-}"
+
+    # Handle usage
+    if [[ "$pid" == "-h" ]] || [[ "$pid" == "--help" ]]; then
+        cat <<EOF
+Usage: qmemmap-read [PID]
+       qmemmap-read [--help]
+
+Parse /proc/{PID}/maps and emit JSON analysis of memory layout.
+Categorizes regions by type (HEAP, STACK, TEXT_SEGMENT, etc.).
+Provides LD_PRELOAD placement recommendations.
+
+If PID is omitted, attempts to detect Claude Code process.
+If detection fails, uses current shell PID ($$).
+
+Output: JSON to stdout
+Errors: JSON to stderr with error field
+Exit codes: 0=success, 1=not found, 2=usage error, 3=invalid PID
+EOF
+        exit 0
+    fi
+
+    # Auto-detect Claude Code PID if not provided
+    if [[ -z "$pid" ]]; then
+        pid=$(pgrep -f "claude.*cli\.js" | head -1)
+        if [[ -z "$pid" ]]; then
+            pid=$$
+        fi
+    fi
+
+    # Validate PID is numeric
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        error_json 2 "Invalid PID: $pid (must be numeric)"
+        exit 2
+    fi
+
+    # Check if process exists
+    if ! kill -0 "$pid" 2>/dev/null; then
+        error_json 1 "Process $pid does not exist or is not accessible"
+        exit 1
+    fi
+
+    # Check if /proc/{PID}/maps is readable
+    local maps_file="/proc/$pid/maps"
+    if [[ ! -r "$maps_file" ]]; then
+        error_json 1 "Cannot read /proc/$pid/maps (permission denied or process terminated)"
+        exit 1
+    fi
+
+    # Parse /proc/{PID}/maps and build JSON
+    local regions_json=""
+    local first=true
+    local heap_start="" heap_end="" stack_start="" stack_end=""
+    local libc_location=""
+
+    while IFS= read -r line; do
+        # Parse: start-end perms offset device inode [path]
+        # Example: 5558f2d21000-5558f2d38000 r--p 00000000 08:05 1749877 /usr/bin/zsh
+
+        local addr_range perms offset device inode rest
+        read -r addr_range perms offset device inode rest <<< "$line"
+
+        local start end path
+        start="${addr_range%-*}"
+        end="${addr_range#*-}"
+        path="$(echo "$rest" | xargs)"  # trim whitespace
+
+        # Track special regions
+        if [[ "$path" == "[heap]" ]]; then
+            heap_start="0x$start"
+            heap_end="0x$end"
+        fi
+        if [[ "$path" == "[stack]" ]]; then
+            stack_start="0x$start"
+            stack_end="0x$end"
+        fi
+        if [[ "$path" =~ libc\.so ]] && [[ -z "$libc_location" ]]; then
+            libc_location="0x$start"
+        fi
+
+        local category
+        category=$(categorize_region "$path" "$perms")
+
+        # Build region JSON object
+        local region_json="{"
+        region_json="$region_json\"start\":\"0x$start\","
+        region_json="$region_json\"end\":\"0x$end\","
+        region_json="$region_json\"perms\":\"$perms\","
+        region_json="$region_json\"offset\":\"0x$offset\","
+        region_json="$region_json\"device\":\"$device\","
+        region_json="$region_json\"inode\":\"$inode\","
+        region_json="$region_json\"path\":\"$(json_escape "$path")\","
+        region_json="$region_json\"type\":\"$category\""
+        region_json="$region_json}"
+
+        if [[ "$first" == true ]]; then
+            regions_json="$region_json"
+            first=false
+        else
+            regions_json="$regions_json,$region_json"
+        fi
+    done < "$maps_file"
+
+    # Generate LD_PRELOAD recommendation
+    local ld_preload_rec="Place hook in [heap] region for minimal impact on existing code"
+    if [[ -n "$heap_start" ]]; then
+        ld_preload_rec="Place hook in [heap] region ($heap_start-$heap_end) for minimal impact"
+    elif [[ -n "$libc_location" ]]; then
+        ld_preload_rec="If heap unavailable, hook after libc ($libc_location) to intercept calls"
+    fi
+
+    # Build complete JSON output
+    cat <<EOF
+{
+  "type": "memory-analysis",
+  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "unit": "12",
+  "data": {
+    "pid": $pid,
+    "memory_regions": [
+      $regions_json
+    ],
+    "heap": {
+      "start": "$heap_start",
+      "end": "$heap_end"
+    },
+    "stack": {
+      "start": "$stack_start",
+      "end": "$stack_end"
+    },
+    "libc_location": "$libc_location",
+    "ld_preload_recommendation": "$(json_escape "$ld_preload_rec")"
+  },
+  "source": "GROUND_TRUTH",
+  "error": null
+}
+EOF
+
+    exit 0
+}
+
+main "$@"
