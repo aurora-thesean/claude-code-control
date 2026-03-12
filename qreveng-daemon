@@ -1,0 +1,621 @@
+#!/usr/bin/env bash
+# qreveng-daemon — Integrated Sensor Orchestrator
+# Unit 13: Co-runs all 12 prior sensors. Emits unified JSON stream to ~/.aurora-agent/qreveng.jsonl
+#
+# Design: This daemon launches background jobs for each sensor and aggregates their
+# output into a single JSONL stream. All entries include source sensor attribution and
+# coordination metadata (timestamp, unit number).
+#
+# Usage:
+#   qreveng-daemon [OPTIONS]
+#
+# Options:
+#   --help               Show this help message
+#   --output FILE        Destination file (default: ~/.aurora-agent/qreveng.jsonl)
+#   --pid PID            Target PID to monitor (default: detect Claude Code PID)
+#   --daemon             Daemonize (run in background, log to file)
+#   --duration SECONDS   Run for N seconds then exit (0=infinite, default)
+#   --interval SECONDS   Sensor sampling interval in seconds (default: 2)
+#   --test               Run quick sanity test and exit
+#
+# Output Format:
+#   Each line in ~/.aurora-agent/qreveng.jsonl is a coordinate tuple:
+#   {
+#     "type": "sensor-coordinate",
+#     "timestamp": "2026-03-12T12:34:56Z",
+#     "source_unit": 1,
+#     "source_name": "qsession-id",
+#     "payload": { /* original sensor JSON */ },
+#     "error": null | "error message"
+#   }
+#
+# Exit codes: 0=normal exit, 1=error, 2=usage error, 128=signal caught
+
+set -euo pipefail
+
+# ─── CONFIGURATION ─────────────────────────────────────────────────────────
+
+readonly SCRIPT_NAME="qreveng-daemon"
+readonly VERSION="0.1.0"
+readonly UNIT="13"
+
+# Defaults
+OUTPUT_FILE="${HOME}/.aurora-agent/qreveng.jsonl"
+DURATION=0
+INTERVAL=2
+DAEMON_MODE=0
+TARGET_PID=""
+
+# Global state
+declare -a SENSOR_PIDS=()
+declare -a SENSOR_NAMES=()
+declare -a SENSOR_UNITS=()
+CLEANUP_CALLED=0
+OUTPUT_FD=""
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────────────────────
+
+_usage() {
+  cat <<'EOF'
+Usage: qreveng-daemon [OPTIONS]
+
+Integrated Sensor Orchestrator — co-runs all 12 prior sensors and merges
+their output into a unified JSONL stream at ~/.aurora-agent/qreveng.jsonl.
+
+Options:
+  --help               Show this help message
+  --output FILE        Destination file (default: ~/.aurora-agent/qreveng.jsonl)
+  --pid PID            Target PID to monitor (default: detect Claude Code PID)
+  --daemon             Daemonize (run in background, log to file)
+  --duration SECONDS   Run for N seconds then exit (0=infinite, default=0)
+  --interval SECONDS   Sensor sampling interval in seconds (default: 2)
+  --test               Run quick sanity test and exit
+
+Examples:
+  qreveng-daemon                      # Run indefinitely, write to ~/.aurora-agent/qreveng.jsonl
+  qreveng-daemon --duration 10        # Run for 10 seconds
+  qreveng-daemon --pid 12345          # Monitor specific PID
+  qreveng-daemon --test               # Verify sensors and exit
+EOF
+}
+
+_timestamp_iso8601() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+_emit_coordinate() {
+  local unit="$1"
+  local source_name="$2"
+  local payload="$3"
+  local error="${4:-null}"
+
+  # Validate payload is valid JSON
+  if ! jq empty <<< "$payload" 2>/dev/null; then
+    error="Invalid JSON from sensor"
+    payload='null'
+  fi
+
+  # Build coordinate tuple and emit to stdout (caller will handle redirection)
+  jq -c -n \
+    --arg ts "$(_timestamp_iso8601)" \
+    --argjson unit "$unit" \
+    --arg name "$source_name" \
+    --argjson payload "$payload" \
+    --arg error "$error" \
+    '{
+      type: "sensor-coordinate",
+      timestamp: $ts,
+      source_unit: $unit,
+      source_name: $name,
+      payload: $payload,
+      error: (if $error == "null" then null else $error end)
+    }' 2>/dev/null || echo '{"type":"error","error":"JSON generation failed"}'
+}
+
+_error() {
+  local msg="$1"
+  local code="${2:-1}"
+  echo "ERROR: $msg" >&2
+  exit "$code"
+}
+
+_log() {
+  local msg="$1"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >&2
+}
+
+_find_claude_pid() {
+  # Try to find Claude Code process
+  pgrep -f 'claude' 2>/dev/null | head -1
+}
+
+# ─── SENSOR LAUNCHING FUNCTIONS ────────────────────────────────────────────
+
+# Launch Unit 1: qsession-id (session UUID ground truth)
+_launch_qsession_id() {
+  local pid_var="$1"
+
+  # Run qsession-id in background, read lines
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qsession-id" 2>/dev/null); then
+        _emit_coordinate 1 "qsession-id" "$output" "null"
+      else
+        _emit_coordinate 1 "qsession-id" 'null' "qsession-id failed"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 2: qtail-jsonl (real-time JSONL monitoring)
+# This runs continuously, streaming JSONL records from session file
+_launch_qtail_jsonl() {
+  local pid_var="$1"
+
+  {
+    # Find the JSONL file to monitor
+    local jsonl_file=""
+    if [[ -n "$TARGET_PID" ]]; then
+      # Try to find session JSONL for this PID
+      for f in ~/.claude/projects/*/[0-9a-f]*.jsonl; do
+        if [[ -f "$f" ]]; then
+          jsonl_file="$f"
+          break
+        fi
+      done
+    else
+      # Use the most recent session JSONL
+      jsonl_file=$(find ~/.claude/projects -name "[0-9a-f]*.jsonl" -type f 2>/dev/null | sort -r | head -1)
+    fi
+
+    if [[ -z "$jsonl_file" ]]; then
+      _emit_coordinate 2 "qtail-jsonl" 'null' "No JSONL file found"
+      return
+    fi
+
+    local last_pos=0
+    while true; do
+      if [[ -f "$jsonl_file" ]]; then
+        # Read new lines since last position
+        while IFS= read -r line; do
+          if [[ -n "$line" ]]; then
+            _emit_coordinate 2 "qtail-jsonl" "$line" "null"
+          fi
+        done < <(tail -c +$((last_pos + 1)) "$jsonl_file" 2>/dev/null)
+        last_pos=$(wc -c < "$jsonl_file" 2>/dev/null || echo 0)
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 3: qenv-snapshot (process environment inspector)
+_launch_qenv_snapshot() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qenv-snapshot" "$TARGET_PID" 2>/dev/null); then
+        _emit_coordinate 3 "qenv-snapshot" "$output" "null"
+      else
+        _emit_coordinate 3 "qenv-snapshot" 'null' "qenv-snapshot failed"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 4: qfd-trace (file descriptor tracking)
+_launch_qfd_trace() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qfd-trace" "$TARGET_PID" 2>/dev/null); then
+        _emit_coordinate 4 "qfd-trace" "$output" "null"
+      else
+        _emit_coordinate 4 "qfd-trace" 'null' "qfd-trace failed"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 5: qjsonl-truth (filtered JSONL parsing)
+# This sensor reads the session JSONL and extracts the actual model/identity
+_launch_qjsonl_truth() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      local jsonl_file=$(find ~/.claude/projects -name "[0-9a-f]*.jsonl" -type f 2>/dev/null | sort -r | head -1)
+      if [[ -n "$jsonl_file" && -f "$jsonl_file" ]]; then
+        # Extract most recent message.model from JSONL
+        if model=$(jq -r '.message.model // empty' "$jsonl_file" 2>/dev/null | tail -1); then
+          if [[ -n "$model" ]]; then
+            payload=$(jq -c -n --arg model "$model" '{model: $model}')
+            _emit_coordinate 5 "qjsonl-truth" "$payload" "null"
+          fi
+        fi
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 6: libqcapture.so (LD_PRELOAD hook)
+# This is a compiled C library; we emit metadata about it rather than running it directly
+_launch_qcapture_hook() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      local libpath="$DAEMON_DIR/libqcapture.so"
+      local status="not-loaded"
+      if [[ -f "$libpath" ]]; then
+        status="available"
+      fi
+      payload=$(jq -c -n --arg status "$status" --arg path "$libpath" '{status: $status, path: $path}')
+      _emit_coordinate 6 "libqcapture" "$payload" "null"
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 7: qcapture-net (network packet capture)
+# This requires tcpdump and network access; emit status
+_launch_qcapture_net() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      local status="not-available"
+      if command -v tcpdump &>/dev/null; then
+        status="available"
+      fi
+      payload=$(jq -c -n --arg status "$status" '{status: $status, requires: "tcpdump"}')
+      _emit_coordinate 7 "qcapture-net" "$payload" "null"
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 8: qclaude-inspect (Node.js debugger attachment)
+# This is complex; emit status only
+_launch_qclaude_inspect() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      local status="standby"
+      if [[ -n "$TARGET_PID" && -d "/proc/$TARGET_PID" ]]; then
+        status="ready"
+      fi
+      payload=$(jq -c -n --arg status "$status" '{status: $status, mechanism: "v8-debugger"}')
+      _emit_coordinate 8 "qclaude-inspect" "$payload" "null"
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 9: qwrapper-trace (wrapper process tracer)
+_launch_qwrapper_trace() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qwrapper-trace" "$TARGET_PID" 2>/dev/null); then
+        _emit_coordinate 9 "qwrapper-trace" "$output" "null"
+      else
+        _emit_coordinate 9 "qwrapper-trace" 'null' "qwrapper-trace not available"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 10: qdecompile-js (beautified analysis)
+# This is file-based analysis; check for the script
+_launch_qdecompile_js() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      local status="available"
+      if [[ ! -x "$DAEMON_DIR/qdecompile-js" ]]; then
+        status="unavailable"
+      fi
+      payload=$(jq -c -n --arg status "$status" '{status: $status}')
+      _emit_coordinate 10 "qdecompile-js" "$payload" "null"
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 11: qargv-map (CLI argument mapper)
+_launch_qargv_map() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qargv-map" "$TARGET_PID" 2>/dev/null); then
+        _emit_coordinate 11 "qargv-map" "$output" "null"
+      else
+        _emit_coordinate 11 "qargv-map" 'null' "qargv-map not available"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# Launch Unit 12: qmemmap-read (memory map inspector)
+_launch_qmemmap_read() {
+  local pid_var="$1"
+
+  {
+    while true; do
+      if output=$("$DAEMON_DIR/qmemmap-read" "$TARGET_PID" 2>/dev/null); then
+        _emit_coordinate 12 "qmemmap-read" "$output" "null"
+      else
+        _emit_coordinate 12 "qmemmap-read" 'null' "qmemmap-read not available"
+      fi
+      sleep "$INTERVAL"
+    done
+  } &
+  eval "$pid_var=$!"
+}
+
+# ─── DAEMON LIFECYCLE ──────────────────────────────────────────────────────
+
+_cleanup() {
+  if (( CLEANUP_CALLED )); then
+    return
+  fi
+  CLEANUP_CALLED=1
+
+  _log "Cleaning up sensor jobs..."
+
+  # Kill all sensor background jobs
+  for pid in "${SENSOR_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+
+  # Wait for graceful shutdown
+  sleep 1
+
+  # Force kill any remaining jobs
+  for pid in "${SENSOR_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+
+  _log "Sensor orchestrator shutting down"
+  exit 0
+}
+
+_start_sensors() {
+  local pid
+
+  _log "Starting sensor ensemble..."
+
+  # Unit 1: qsession-id
+  _launch_qsession_id pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qsession-id")
+  SENSOR_UNITS+=(1)
+
+  # Unit 2: qtail-jsonl
+  _launch_qtail_jsonl pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qtail-jsonl")
+  SENSOR_UNITS+=(2)
+
+  # Unit 3: qenv-snapshot
+  _launch_qenv_snapshot pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qenv-snapshot")
+  SENSOR_UNITS+=(3)
+
+  # Unit 4: qfd-trace
+  _launch_qfd_trace pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qfd-trace")
+  SENSOR_UNITS+=(4)
+
+  # Unit 5: qjsonl-truth
+  _launch_qjsonl_truth pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qjsonl-truth")
+  SENSOR_UNITS+=(5)
+
+  # Unit 6: libqcapture
+  _launch_qcapture_hook pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("libqcapture")
+  SENSOR_UNITS+=(6)
+
+  # Unit 7: qcapture-net
+  _launch_qcapture_net pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qcapture-net")
+  SENSOR_UNITS+=(7)
+
+  # Unit 8: qclaude-inspect
+  _launch_qclaude_inspect pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qclaude-inspect")
+  SENSOR_UNITS+=(8)
+
+  # Unit 9: qwrapper-trace
+  _launch_qwrapper_trace pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qwrapper-trace")
+  SENSOR_UNITS+=(9)
+
+  # Unit 10: qdecompile-js
+  _launch_qdecompile_js pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qdecompile-js")
+  SENSOR_UNITS+=(10)
+
+  # Unit 11: qargv-map
+  _launch_qargv_map pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qargv-map")
+  SENSOR_UNITS+=(11)
+
+  # Unit 12: qmemmap-read
+  _launch_qmemmap_read pid
+  SENSOR_PIDS+=("$pid")
+  SENSOR_NAMES+=("qmemmap-read")
+  SENSOR_UNITS+=(12)
+
+  _log "Started 12 sensor units (${#SENSOR_PIDS[@]} background jobs)"
+}
+
+_run_daemon() {
+  # Create output directory and file
+  mkdir -p "$(dirname "$OUTPUT_FILE")"
+  touch "$OUTPUT_FILE"
+  _log "Writing sensor output to $OUTPUT_FILE"
+
+  # Set up signal handlers
+  trap _cleanup SIGTERM SIGINT EXIT
+
+  # Start all sensor background jobs with stdout redirected to output file
+  # Stderr (logging) remains on stderr
+  (
+    _start_sensors
+
+    # Main event loop: collect output from all sensors
+    local start_time=$(date +%s)
+    local elapsed=0
+
+    while true; do
+      if (( DURATION > 0 )); then
+        elapsed=$(( $(date +%s) - start_time ))
+        if (( elapsed >= DURATION )); then
+          _log "Duration limit reached ($DURATION seconds)" >&2
+          break
+        fi
+      fi
+
+      # Small sleep to avoid busy-waiting
+      sleep 0.1
+    done
+  ) >> "$OUTPUT_FILE"
+
+  _cleanup
+}
+
+# ─── TEST MODE ─────────────────────────────────────────────────────────────
+
+_run_test() {
+  _log "Running sanity test..."
+
+  local test_passed=0
+
+  # Verify all sensor scripts exist
+  for name in qsession-id qenv-snapshot qfd-trace qwrapper-trace qargv-map qmemmap-read qdecompile-js; do
+    if [[ -x "$DAEMON_DIR/$name" ]]; then
+      _log "✓ Found $name"
+      test_passed=$((test_passed + 1))
+    else
+      _log "✗ Missing $name"
+    fi
+  done
+
+  _log "Quick test: launching 3 sample sensors..."
+
+  # Try running a few sensors
+  if output=$("$DAEMON_DIR/qsession-id" 2>/dev/null); then
+    if jq empty <<< "$output" 2>/dev/null; then
+      _log "✓ qsession-id produced valid JSON"
+      test_passed=$((test_passed + 1))
+    fi
+  fi
+
+  if output=$("$DAEMON_DIR/qenv-snapshot" 2>/dev/null); then
+    if jq empty <<< "$output" 2>/dev/null; then
+      _log "✓ qenv-snapshot produced valid JSON"
+      test_passed=$((test_passed + 1))
+    fi
+  fi
+
+  _log "Test complete: $test_passed checks passed"
+  exit 0
+}
+
+# ─── MAIN ─────────────────────────────────────────────────────────────────
+
+main() {
+  # Detect this script's directory FIRST (needed for --test)
+  DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help)
+        _usage
+        exit 0
+        ;;
+      --output)
+        OUTPUT_FILE="$2"
+        shift 2
+        ;;
+      --pid)
+        TARGET_PID="$2"
+        shift 2
+        ;;
+      --daemon)
+        DAEMON_MODE=1
+        shift
+        ;;
+      --duration)
+        DURATION="$2"
+        shift 2
+        ;;
+      --interval)
+        INTERVAL="$2"
+        shift 2
+        ;;
+      --test)
+        _run_test
+        ;;
+      *)
+        _usage
+        exit 2
+        ;;
+    esac
+  done
+
+  # Auto-detect target PID if not specified
+  if [[ -z "$TARGET_PID" ]]; then
+    TARGET_PID=$(_find_claude_pid) || TARGET_PID="$$"
+  fi
+
+  _log "Sensor Orchestrator starting (Unit 13)"
+  _log "Target PID: $TARGET_PID"
+  _log "Output: $OUTPUT_FILE"
+  _log "Interval: ${INTERVAL}s"
+
+  # Run the daemon
+  _run_daemon
+}
+
+main "$@"
