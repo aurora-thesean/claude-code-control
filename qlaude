@@ -855,6 +855,99 @@ print(json.dumps({
 PYJSON
 }
 
+# Child-side: Accept a warrant from parent
+# Usage: _accept_warrant <warrant_file> [--accept | --counter-propose <loa>]
+# Returns: JSON acceptance record
+_accept_warrant() {
+  local warrant_file="$1"
+  local action="${2:-}"
+
+  if [[ ! -f "$warrant_file" ]]; then
+    _error "Warrant file not found: $warrant_file"
+  fi
+
+  # First validate the warrant
+  local validation
+  validation=$(_validate_warrant "$warrant_file")
+
+  if ! echo "$validation" | grep -q '"status": "VALID"'; then
+    _log "Warrant validation failed: $validation"
+    return 1
+  fi
+
+  # Parse warrant details
+  local warrant_id parent_uuid proposed_loa_cap
+  warrant_id=$(grep -o '"warrant_id": "[^"]*"' "$warrant_file" | cut -d'"' -f4)
+  parent_uuid=$(grep -o '"parent_uuid": "[^"]*"' "$warrant_file" | cut -d'"' -f4)
+  proposed_loa_cap=$(grep -o '"proposed_loa_cap": [0-9]*' "$warrant_file" | cut -d' ' -f2)
+
+  # Get current child LOA
+  local child_loa
+  child_loa=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || child_loa=2
+
+  # Determine acceptance status
+  local accepted_loa status reason
+  if [[ "$action" == "--counter-propose" ]]; then
+    local counter_loa="${3:-}"
+    [[ -n "$counter_loa" ]] || _error "Counter-proposal requires LOA value"
+    if (( counter_loa > proposed_loa_cap )); then
+      _error "Cannot counter-propose LOA_CAP=$counter_loa (exceeds parent proposal of $proposed_loa_cap)"
+    fi
+    accepted_loa="$counter_loa"
+    status="NEGOTIATED"
+    reason="Child counter-proposed LOA_CAP=$counter_loa (parent proposed $proposed_loa_cap)"
+  elif (( child_loa >= proposed_loa_cap )); then
+    # Child can handle the proposed LOA
+    accepted_loa="$proposed_loa_cap"
+    status="ACCEPTED"
+    reason="Child can handle proposed LOA_CAP=$proposed_loa_cap"
+  else
+    # Child cannot handle the proposed LOA
+    accepted_loa="$child_loa"
+    status="NEGOTIATED"
+    reason="Child can only handle LOA_CAP=$child_loa (parent proposed $proposed_loa_cap)"
+  fi
+
+  # Create acceptance record
+  _ensure_aurora_agent_dir
+
+  # Create acceptance JSONL record
+  local acceptance_dir="${WARRANTS_DIR}/acceptances"
+  mkdir -p "$acceptance_dir"
+
+  local acceptance_file="$acceptance_dir/${warrant_id}_acceptance.jsonl"
+
+  # Write acceptance record
+  python3 << PYJSON > "$acceptance_file"
+import json
+from datetime import datetime, timezone
+
+acceptance = {
+    "type": "loa_acceptance",
+    "warrant_id": "$warrant_id",
+    "parent_uuid": "$parent_uuid",
+    "child_uuid": "$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo 'unknown')",
+    "proposed_loa_cap": $proposed_loa_cap,
+    "accepted_loa_cap": $accepted_loa,
+    "status": "$status",
+    "reason": "$reason",
+    "child_loa_cap": $child_loa,
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+}
+
+print(json.dumps(acceptance))
+PYJSON
+
+  _log "Warrant acceptance recorded: $acceptance_file"
+  _log "Status: $status (accepted_loa=$accepted_loa)"
+
+  # Log to audit trail
+  _audit_log "warrant-accept" "$warrant_id" "$status" "$(( child_loa / 2 ))" "$child_loa" "$reason"
+
+  # Return acceptance details
+  cat "$acceptance_file"
+}
+
 # Create a warrant for delegating autonomy to a child agent
 # Usage: _create_warrant <child_uuid> <task_description> <proposed_loa_cap> <trust_score> [time_limit_secs]
 _create_warrant() {
@@ -1079,6 +1172,25 @@ main() {
       fi
 
       _validate_warrant "$warrant_file"
+      ;;
+
+    --accept-warrant)
+      # NESTED_LOA: Child accepts a warrant from parent
+      # Usage: qlaude --accept-warrant <warrant_file> [--accept | --counter-propose <loa>]
+      local warrant_file="${2:-}"
+      [[ -n "$warrant_file" ]] || _error "--accept-warrant requires a warrant file path"
+
+      if [[ ! -f "$warrant_file" ]]; then
+        _error "Warrant file not found: $warrant_file"
+      fi
+
+      # Check if counter-proposing
+      local action="${3:-}"
+      if [[ "$action" == "--counter-propose" ]]; then
+        _accept_warrant "$warrant_file" "$action" "${4:-}"
+      else
+        _accept_warrant "$warrant_file" "${action:---accept}"
+      fi
       ;;
 
     "")
