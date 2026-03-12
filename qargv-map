@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""
+Unit 11: CLI Argument & Environment Mapper
+Parses the Claude Code CLI for process.argv and process.env patterns.
+Outputs JSON maps for:
+  - CLI argument patterns (argv-map)
+  - Environment variable usage (env-map)
+"""
+
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+def extract_argv_patterns():
+    """Extract argv patterns from --help output and cli.js source."""
+    patterns = []
+
+    # Standard argv patterns (from --help)
+    help_patterns = [
+        ("--add-dir", "Additional directories to allow tool access to", None, None),
+        ("--agent", "Agent for the current session. Overrides the 'agent' setting.", None, None),
+        ("--agents", "JSON object defining custom agents", None, None),
+        ("--allow-dangerously-skip-permissions", "Enable bypassing all permission checks", None, None),
+        ("--allowedTools/--allowed-tools", "Comma or space-separated list of allowed tools", None, None),
+        ("--append-system-prompt", "Append a system prompt to default", None, None),
+        ("--betas", "Beta headers to include in API requests", None, None),
+        ("--chrome", "Enable Claude in Chrome integration", None, None),
+        ("-c/--continue", "Continue the most recent conversation", None, None),
+        ("--dangerously-skip-permissions", "Bypass all permission checks", None, None),
+        ("-d/--debug", "Enable debug mode with optional category filtering", None, None),
+        ("--debug-file", "Write debug logs to a specific file path", None, None),
+        ("--disable-slash-commands", "Disable all skills", None, None),
+        ("--disallowedTools/--disallowed-tools", "Comma or space-separated list of denied tools", None, None),
+        ("--effort", "Effort level for the current session (low, medium, high)", None, None),
+        ("--fallback-model", "Enable automatic fallback to specified model", None, None),
+        ("--file", "File resources to download at startup", None, None),
+        ("--fork-session", "When resuming, create a new session ID", None, None),
+        ("--from-pr", "Resume a session linked to a PR by PR number/URL", None, None),
+        ("-h/--help", "Display help for command", None, None),
+        ("--ide", "Automatically connect to IDE on startup", None, None),
+        ("--include-partial-messages", "Include partial message chunks as they arrive", None, None),
+        ("--input-format", "Input format (text or stream-json)", None, None),
+        ("--json-schema", "JSON Schema for structured output validation", None, None),
+        ("--max-budget-usd", "Maximum dollar amount to spend on API calls", None, None),
+        ("--mcp-config", "Load MCP servers from JSON files or strings", None, None),
+        ("--mcp-debug", "[DEPRECATED] Enable MCP debug mode", None, None),
+        ("--model", "Model for the current session (alias or full name)", None, None),
+        ("--no-chrome", "Disable Claude in Chrome integration", None, None),
+        ("--no-session-persistence", "Disable session persistence", None, None),
+        ("--output-format", "Output format (text, json, or stream-json)", None, None),
+        ("--permission-mode", "Permission mode (acceptEdits, bypassPermissions, default, dontAsk, plan, auto)", None, None),
+        ("--plugin-dir", "Load plugins from directories for this session only", None, None),
+        ("-p/--print", "Print response and exit (useful for pipes)", None, None),
+        ("--replay-user-messages", "Re-emit user messages from stdin back on stdout", None, None),
+        ("-r/--resume", "Resume a conversation by session ID", None, None),
+        ("--session-id", "Use a specific session ID for the conversation (must be valid UUID)", None, None),
+        ("--setting-sources", "Comma-separated list of setting sources (user, project, local)", None, None),
+        ("--settings", "Path to settings JSON file or JSON string", None, None),
+        ("--strict-mcp-config", "Only use MCP servers from --mcp-config", None, None),
+        ("--system-prompt", "System prompt to use for the session", None, None),
+        ("--tmux", "Create a tmux session for the worktree (requires --worktree)", None, None),
+        ("--tools", "Specify list of available tools from built-in set", None, None),
+        ("--verbose", "Override verbose mode setting from config", None, None),
+        ("-v/--version", "Output the version number", None, None),
+        ("-w/--worktree", "Create a new git worktree for this session", None, None),
+        ("PROMPT", "Your prompt (positional argument)", None, None),
+        ("COMMAND", "Command to execute (agents, auth, doctor, install, mcp, plugin, setup-token, update/upgrade)", None, None),
+    ]
+
+    for pattern, description, line_num, handler in help_patterns:
+        patterns.append({
+            "pattern": pattern,
+            "description": description,
+            "line": line_num,
+            "handler": handler,
+            "source": "help-output"
+        })
+
+    return patterns
+
+def extract_env_vars():
+    """Extract environment variables from cli.js source."""
+    cli_path = Path.home() / "node_modules/@anthropic-ai/claude-code/cli.js"
+
+    if not cli_path.exists():
+        return []
+
+    # Read the file and extract process.env.* patterns
+    try:
+        with open(cli_path, 'r', errors='ignore') as f:
+            content = f.read()
+    except Exception as e:
+        print(f"Warning: Could not read cli.js: {e}", file=sys.stderr)
+        return []
+
+    # Extract unique env var names
+    env_pattern = re.compile(r'process\.env\.([A-Z_]+)')
+    matches = set(env_pattern.findall(content))
+
+    env_vars = []
+    env_descriptions = {
+        # Authentication & API
+        "ANTHROPIC_API_KEY": "Anthropic API key for authentication",
+        "ANTHROPIC_AUTH_TOKEN": "Anthropic authentication token",
+        "ANTHROPIC_BASE_URL": "Custom base URL for Anthropic API",
+        "ANTHROPIC_BEDROCK_BASE_URL": "Base URL for AWS Bedrock (Anthropic models)",
+        "ANTHROPIC_BETAS": "Beta feature headers for API requests",
+        "ANTHROPIC_CUSTOM_HEADERS": "Custom headers for API requests",
+        "ANTHROPIC_FOUNDRY_API_KEY": "Anthropic Foundry API key",
+        "ANTHROPIC_FOUNDRY_BASE_URL": "Anthropic Foundry base URL",
+        "ANTHROPIC_FOUNDRY_RESOURCE": "Anthropic Foundry resource identifier",
+        "ANTHROPIC_MODEL": "Override default model",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "Default Sonnet model variant",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Default Haiku model variant",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "Default Opus model variant",
+        "ANTHROPIC_SMALL_FAST_MODEL": "Small/fast model for subagents",
+        "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION": "AWS region for small fast model",
+        "ANTHROPIC_VERTEX_PROJECT_ID": "Google Vertex AI project ID",
+
+        # Claude Code Configuration
+        "CLAUDE_CODE_DEBUG_LOG_LEVEL": "Debug log level (debug, info, warn, error)",
+        "CLAUDE_CODE_DEBUG_LOGS_DIR": "Directory for debug logs",
+        "CLAUDE_CODE_SESSION_ID": "Session identifier (UUID)",
+        "CLAUDE_CODE_SHELL": "Shell to use for bash tool",
+        "CLAUDE_CODE_TMPDIR": "Temporary directory for Claude Code",
+        "CLAUDE_CODE_API_BASE_URL": "Base URL for Claude Code API",
+        "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR": "File descriptor for API key (instead of env var)",
+        "CLAUDE_CODE_OAUTH_TOKEN": "OAuth token for authentication",
+        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR": "File descriptor for OAuth token",
+        "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR": "File descriptor for WebSocket auth",
+        "CLAUDE_CODE_ACTION": "Action to perform in session",
+        "CLAUDE_CODE_ENTRYPOINT": "Entrypoint for Claude Code",
+        "CLAUDE_CODE_ENVIRONMENT_KIND": "Environment kind (local, remote, etc.)",
+        "CLAUDE_CODE_REMOTE_SESSION_ID": "Remote session identifier",
+        "CLAUDE_CODE_REMOTE_MEMORY_DIR": "Remote memory directory",
+        "CLAUDE_CODE_REMOTE_SEND_KEEPALIVES": "Send keepalive messages to remote",
+        "CLAUDE_CODE_CONTAINER_ID": "Container ID for execution environment",
+
+        # Feature Toggles
+        "CLAUDE_CODE_ENABLE_TASKS": "Enable Claude Code tasks feature",
+        "CLAUDE_CODE_DISABLE_THINKING": "Disable extended thinking",
+        "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "Disable adaptive thinking",
+        "CLAUDE_CODE_DISABLE_FAST_MODE": "Disable fast mode optimization",
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "Disable automatic memory management",
+        "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "Disable CLAUDE.md processing",
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "Enable telemetry collection",
+        "CLAUDE_CODE_DISABLE_TELEMETRY": "Disable telemetry",
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "Disable feedback survey",
+        "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING": "Disable file checkpointing",
+        "CLAUDE_CODE_ENABLE_TASKS": "Enable tasks feature",
+        "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING": "Enable SDK file checkpointing",
+        "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "Enable fine-grained tool streaming",
+        "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "Enable prompt suggestion",
+
+        # Performance & Limits
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "Maximum output tokens per response",
+        "CLAUDE_CODE_MAX_RETRIES": "Maximum retries for API calls",
+        "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "Maximum concurrent tool calls",
+        "CLAUDE_CODE_API_TIMEOUT_MS": "API call timeout in milliseconds",
+        "CLAUDE_CODE_GLOB_TIMEOUT_SECONDS": "File glob operation timeout",
+        "CLAUDE_CODE_SLOW_OPERATION_THRESHOLD_MS": "Threshold for slow operation warning",
+        "CLAUDE_CODE_STALL_TIMEOUT_MS_FOR_TESTING": "Testing: stall timeout",
+        "CLAUDE_CODE_EFFORT_LEVEL": "Effort level (low, medium, high)",
+
+        # AWS/Cloud Integration
+        "AWS_PROFILE": "AWS profile name",
+        "AWS_REGION": "AWS region",
+        "AWS_ACCESS_KEY_ID": "AWS access key ID",
+        "AWS_SECRET_ACCESS_KEY": "AWS secret access key",
+        "AWS_SESSION_TOKEN": "AWS session token",
+        "BEDROCK_BASE_URL": "AWS Bedrock base URL",
+        "ANTHROPIC_BEDROCK_BASE_URL": "Anthropic on AWS Bedrock URL",
+
+        # Azure Integration
+        "AZURE_CLIENT_ID": "Azure client ID",
+        "AZURE_CLIENT_SECRET": "Azure client secret",
+        "AZURE_TENANT_ID": "Azure tenant ID",
+        "AZURE_AUTHORITY_HOST": "Azure authority host",
+        "AZURE_CLIENT_CERTIFICATE_PATH": "Path to Azure client certificate",
+        "AZURE_PASSWORD": "Azure password",
+        "AZURE_USERNAME": "Azure username",
+
+        # Google Cloud Integration
+        "GOOGLE_APPLICATION_CREDENTIALS": "Path to Google Cloud credentials JSON",
+        "GOOGLE_CLOUD_PROJECT": "Google Cloud project ID",
+        "GCLOUD_PROJECT": "GCloud project ID",
+        "CLOUD_ML_REGION": "Google Cloud ML region",
+
+        # MCP (Model Context Protocol)
+        "CLAUDE_CODE_ENABLE_TASKS": "Enable MCP tasks",
+        "MCP_TIMEOUT": "MCP operation timeout",
+        "MCP_TOOL_TIMEOUT": "MCP tool execution timeout",
+        "MCP_SERVER_CONNECTION_BATCH_SIZE": "MCP server connection batch size",
+        "MCP_REMOTE_SERVER_CONNECTION_BATCH_SIZE": "MCP remote server batch size",
+        "MAX_MCP_OUTPUT_TOKENS": "Maximum tokens for MCP output",
+
+        # Telemetry & Observability
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "OpenTelemetry OTLP exporter endpoint",
+        "OTEL_EXPORTER_OTLP_HEADERS": "OpenTelemetry OTLP headers",
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "Enable Claude Code telemetry",
+        "CLAUDE_CODE_DATADOG_FLUSH_INTERVAL_MS": "Datadog flush interval",
+        "CLAUDE_CODE_PERFETTO_TRACE": "Perfetto trace file path",
+
+        # Editor/IDE Integration
+        "EDITOR": "Default editor command",
+        "VISUAL": "Default visual editor",
+        "CLAUDE_CODE_IDE_HOST_OVERRIDE": "Override IDE host",
+        "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL": "Skip IDE auto-install",
+        "CLAUDE_CODE_IDE_SKIP_VALID_CHECK": "Skip IDE validity check",
+
+        # File System
+        "CLAUDE_CODE_TMPDIR": "Temporary directory",
+        "CLAUDE_CODE_PLUGIN_CACHE_DIR": "Plugin cache directory",
+        "CLAUDE_CODE_TEST_FIXTURES_ROOT": "Test fixtures root directory",
+        "CLAUDE_CODE_DEBUG_LOGS_DIR": "Debug logs directory",
+        "CLAUDE_CODE_PLUGIN_SEED_DIR": "Plugin seed directory",
+
+        # System Environment
+        "HOME": "Home directory",
+        "USER": "Current user name",
+        "SHELL": "Current shell",
+        "TERM": "Terminal type",
+        "PATH": "System PATH",
+        "NODE_OPTIONS": "Node.js command-line options",
+        "NODE_EXTRA_CA_CERTS": "Additional CA certificates for Node.js",
+        "NODE_DEBUG": "Node.js debug topics",
+
+        # SSH & Network
+        "SSH_CLIENT": "SSH client info (from server)",
+        "SSH_TTY": "SSH terminal (from server)",
+        "HTTP_PROXY": "HTTP proxy server",
+        "HTTPS_PROXY": "HTTPS proxy server",
+        "NO_PROXY": "No proxy hosts",
+
+        # Other
+        "CI": "Indicates continuous integration environment",
+        "GITHUB_ACTIONS": "Indicates GitHub Actions environment",
+        "GITLAB_CI": "Indicates GitLab CI environment",
+    }
+
+    for var_name in sorted(matches):
+        env_vars.append({
+            "name": var_name,
+            "description": env_descriptions.get(var_name, f"Environment variable: {var_name}"),
+            "line": None,
+            "usage": None,
+            "source": "cli.js-grep"
+        })
+
+    return env_vars
+
+def main():
+    """Main entry point."""
+    output_dir = Path.home() / "repo-staging/claude-code-control"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract argv patterns
+    argv_patterns = extract_argv_patterns()
+
+    # Extract env vars
+    env_vars = extract_env_vars()
+
+    # Build argv map
+    now_utc = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    argv_map = {
+        "type": "argv-analysis",
+        "timestamp": now_utc,
+        "unit": "11",
+        "source": "claude-help-output + cli.js analysis",
+        "data": {
+            "entry_point": {
+                "function": "main",
+                "line": None,
+                "description": "CLI entry point invoked with process.argv"
+            },
+            "option_parsing": {
+                "library": "yargs (inferred from help output structure)",
+                "line": None,
+                "description": "Arguments parsed by yargs or similar CLI framework"
+            },
+            "argv_patterns": argv_patterns,
+            "commands": [
+                {
+                    "name": "agents",
+                    "description": "List configured agents",
+                    "usage": "claude agents [options]"
+                },
+                {
+                    "name": "auth",
+                    "description": "Manage authentication",
+                    "usage": "claude auth"
+                },
+                {
+                    "name": "doctor",
+                    "description": "Check the health of your Claude Code auto-updater",
+                    "usage": "claude doctor"
+                },
+                {
+                    "name": "install",
+                    "description": "Install Claude Code native build",
+                    "usage": "claude install [options] [target]"
+                },
+                {
+                    "name": "mcp",
+                    "description": "Configure and manage MCP servers",
+                    "usage": "claude mcp"
+                },
+                {
+                    "name": "plugin",
+                    "description": "Manage Claude Code plugins",
+                    "usage": "claude plugin"
+                },
+                {
+                    "name": "setup-token",
+                    "description": "Set up a long-lived authentication token",
+                    "usage": "claude setup-token"
+                },
+                {
+                    "name": "update|upgrade",
+                    "description": "Check for updates and install if available",
+                    "usage": "claude update"
+                }
+            ],
+            "positional_arguments": [
+                {
+                    "name": "prompt",
+                    "description": "Your prompt",
+                    "position": "last",
+                    "optional": True
+                },
+                {
+                    "name": "command",
+                    "description": "Subcommand to execute",
+                    "position": "first",
+                    "optional": True
+                }
+            ]
+        },
+        "error": None
+    }
+
+    # Build env map
+    env_map = {
+        "type": "env-analysis",
+        "timestamp": now_utc,
+        "unit": "11",
+        "source": "cli.js grep + documentation",
+        "data": {
+            "env_vars": env_vars,
+            "summary": {
+                "total_vars": len(env_vars),
+                "categories": {
+                    "authentication": len([v for v in env_vars if any(x in v["name"] for x in ["API_KEY", "TOKEN", "AUTH", "CREDENTIAL"])]),
+                    "claude_code_config": len([v for v in env_vars if v["name"].startswith("CLAUDE_CODE_")]),
+                    "cloud_providers": len([v for v in env_vars if any(x in v["name"] for x in ["AWS_", "AZURE_", "GOOGLE_", "BEDROCK", "VERTEX"])]),
+                    "system_environment": len([v for v in env_vars if v["name"] in ["HOME", "USER", "SHELL", "TERM", "PATH"]]),
+                }
+            }
+        },
+        "error": None
+    }
+
+    # Write argv map
+    argv_path = output_dir / "cli-argv-map.json"
+    with open(argv_path, 'w') as f:
+        json.dump(argv_map, f, indent=2)
+    print(f"✓ Created {argv_path}", file=sys.stderr)
+
+    # Write env map
+    env_path = output_dir / "cli-env-map.json"
+    with open(env_path, 'w') as f:
+        json.dump(env_map, f, indent=2)
+    print(f"✓ Created {env_path}", file=sys.stderr)
+
+    # Summary
+    print(f"\nAnalysis Complete:", file=sys.stderr)
+    print(f"  Argv patterns: {len(argv_patterns)}", file=sys.stderr)
+    print(f"  Env variables: {len(env_vars)}", file=sys.stderr)
+    print(f"  Subcommands: {len(argv_map['data']['commands'])}", file=sys.stderr)
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

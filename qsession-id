@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# qsession-id — Session UUID Ground Truth Sensor (Unit 1)
+#
+# Reads current session UUID from inotify directory inode watching ~/.claude/tasks/{UUID}/
+# Returns JSON with UUID, inode, and ground truth source attribution.
+#
+# Design principle: Ground truth is the inode being watched by inotify, NOT env vars.
+# The directory name (UUID) is extracted from matching the inode to filesystem state.
+#
+# Usage:
+#   qsession-id                  # Current session UUID (must be called from claude process)
+#   qsession-id <UUID>           # Verify UUID and return inode info
+#   qsession-id --self           # Alias for current session
+#   qsession-id --all            # All running sessions with inodes
+#
+# Exit codes: 0=success, 1=not found/error, 2=usage error
+
+set -euo pipefail
+
+# ─── CONFIGURATION ─────────────────────────────────────────
+
+readonly SCRIPT_NAME="qsession-id"
+readonly VERSION="0.1.0"
+readonly UNIT="1"
+
+# Paths
+TASKS_DIR="${HOME}/.claude/tasks"
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────
+
+# Emit successful JSON response
+emit_success() {
+  local session_uuid="$1"
+  local inode="$2"
+  local tasks_dir="${TASKS_DIR}/${session_uuid}"
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  cat <<EOF
+{
+  "type": "sensor",
+  "timestamp": "${timestamp}",
+  "unit": "${UNIT}",
+  "data": {
+    "session_uuid": "${session_uuid}",
+    "inode": "${inode}",
+    "tasks_dir": "${tasks_dir}"
+  },
+  "source": "GROUND_TRUTH",
+  "error": null
+}
+EOF
+}
+
+# Emit error JSON response
+emit_error() {
+  local error_msg="$1"
+
+  cat <<EOF
+{
+  "type": "error",
+  "unit": "${UNIT}",
+  "error": "${error_msg}",
+  "source": null
+}
+EOF
+}
+
+# Find claude process PID by walking process tree
+_find_claude_pid() {
+  local pid="${1:-$$}"
+  local depth=0
+  while (( depth < 20 )); do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
+    if [[ "$comm" == "claude" ]]; then
+      echo "$pid"
+      return 0
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || break
+    [[ -n "$pid" && "$pid" -gt 1 ]] || break
+    depth=$(( depth + 1 ))
+  done
+  return 1
+}
+
+# Find session UUID via inotify mechanism
+# Ground truth: reads inotify file descriptor info from /proc
+# Returns: UUID of the directory being watched
+_find_session_uuid_from_inotify() {
+  local claude_pid="$1"
+
+  # Walk file descriptors looking for inotify handles
+  for fd_path in /proc/$claude_pid/fd/*; do
+    target=$(readlink "$fd_path" 2>/dev/null) || continue
+    [[ "$target" == "anon_inode:inotify" ]] || continue
+
+    # Found an inotify fd; read fdinfo to get inode numbers
+    fd_num=$(basename "$fd_path")
+    while IFS= read -r line; do
+      # Extract inode from format: ino:abcd1234
+      ino_hex=$(printf '%s' "$line" | grep -o 'ino:[0-9a-f]*' | cut -d: -f2) || continue
+      [[ -n "$ino_hex" ]] || continue
+
+      # Convert hex inode to decimal
+      ino_dec=$((16#$ino_hex)) 2>/dev/null || continue
+
+      # Match against inodes in ~/.claude/tasks/*/
+      for tasks_subdir in "$TASKS_DIR"/*/; do
+        [[ -d "$tasks_subdir" ]] || continue
+        subdir_ino=$(stat -c %i "$tasks_subdir" 2>/dev/null) || continue
+
+        if [[ "$subdir_ino" == "$ino_dec" ]]; then
+          # Found matching inode; extract UUID from directory name
+          local uuid=$(basename "$tasks_subdir")
+          echo "$uuid|$ino_dec"
+          return 0
+        fi
+      done
+    done < /proc/$claude_pid/fdinfo/$fd_num 2>/dev/null
+  done
+
+  return 1
+}
+
+# Verify UUID by checking if directory exists and getting inode
+_verify_uuid_inode() {
+  local uuid="$1"
+  local tasks_path="${TASKS_DIR}/${uuid}"
+
+  [[ -d "$tasks_path" ]] || return 1
+
+  local inode=$(stat -c %i "$tasks_path" 2>/dev/null) || return 1
+  echo "$uuid|$inode"
+  return 0
+}
+
+# List all running sessions with their inodes
+_list_all_sessions() {
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  echo "["
+
+  local first=1
+  for tasks_subdir in "$TASKS_DIR"/*/; do
+    [[ -d "$tasks_subdir" ]] || continue
+    local uuid=$(basename "$tasks_subdir")
+    local inode=$(stat -c %i "$tasks_subdir" 2>/dev/null) || continue
+
+    if [[ $first -eq 0 ]]; then
+      echo ","
+    fi
+    first=0
+
+    cat <<EOF
+  {
+    "type": "sensor",
+    "timestamp": "${timestamp}",
+    "unit": "${UNIT}",
+    "data": {
+      "session_uuid": "${uuid}",
+      "inode": "${inode}",
+      "tasks_dir": "${tasks_subdir%/}"
+    },
+    "source": "GROUND_TRUTH",
+    "error": null
+  }
+EOF
+  done
+
+  echo ""
+  echo "]"
+}
+
+# ─── MAIN ──────────────────────────────────────────────────
+
+case "${1:-}" in
+  --self | "")
+    # Get current session UUID via inotify
+    claude_pid=$(_find_claude_pid $$) || {
+      emit_error "not inside a claude process tree" >&2
+      exit 1
+    }
+
+    result=$(_find_session_uuid_from_inotify "$claude_pid") || {
+      emit_error "could not find session UUID from inotify (PID $claude_pid)" >&2
+      exit 1
+    }
+
+    session_uuid=$(echo "$result" | cut -d'|' -f1)
+    inode=$(echo "$result" | cut -d'|' -f2)
+
+    emit_success "$session_uuid" "$inode"
+    ;;
+
+  --all)
+    # List all sessions
+    _list_all_sessions
+    ;;
+
+  [0-9a-f]*)
+    # UUID provided (can be full UUID or prefix)
+    uuid_prefix="$1"
+    found_uuid=""
+
+    # Find full UUID matching this prefix
+    for tasks_subdir in "$TASKS_DIR"/*/; do
+      [[ -d "$tasks_subdir" ]] || continue
+      dir_uuid=$(basename "$tasks_subdir")
+      if [[ "$dir_uuid" == "$uuid_prefix"* ]]; then
+        found_uuid="$dir_uuid"
+        break
+      fi
+    done
+
+    [[ -n "$found_uuid" ]] || {
+      emit_error "UUID prefix '$uuid_prefix' not found in $TASKS_DIR" >&2
+      exit 1
+    }
+
+    # Verify and get inode
+    result=$(_verify_uuid_inode "$found_uuid") || {
+      emit_error "could not get inode for UUID $found_uuid" >&2
+      exit 1
+    }
+
+    session_uuid=$(echo "$result" | cut -d'|' -f1)
+    inode=$(echo "$result" | cut -d'|' -f2)
+
+    emit_success "$session_uuid" "$inode"
+    ;;
+
+  --help | -h)
+    cat <<EOF
+${SCRIPT_NAME} v${VERSION} — Session UUID Ground Truth Sensor (Unit 1)
+
+Usage:
+  ${SCRIPT_NAME}              # Current session UUID
+  ${SCRIPT_NAME} --self       # Alias for current session
+  ${SCRIPT_NAME} <UUID>       # Verify UUID and return inode
+  ${SCRIPT_NAME} --all        # List all sessions with inodes
+  ${SCRIPT_NAME} --help       # Show this help
+
+The ground truth is the inode number of ~/.claude/tasks/{UUID}/
+as discovered by reading inotify file descriptor state from /proc.
+
+Output: Valid JSON (per REVENGINEER Unit 1 specification)
+Exit codes: 0=success, 1=error, 2=usage error
+EOF
+    ;;
+
+  *)
+    emit_error "unknown option: $1" >&2
+    exit 2
+    ;;
+esac

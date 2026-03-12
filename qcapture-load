@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# qcapture-load — Loader for LD_PRELOAD File I/O Hook
+#
+# Wraps a command with the qcapture LD_PRELOAD library to intercept and log
+# file I/O syscalls (open, write, read) for JSONL files.
+#
+# Usage:
+#   qcapture-load [OPTIONS] <command> [args...]
+#
+# Options:
+#   --libdir <dir>     Path to directory containing libqcapture.so (default: auto-detect)
+#   --logfile <path>   Log output file (default: /tmp/qcapture.log)
+#   --clear-log        Clear log file before running (default: append)
+#   --help             Show this message
+#
+# Examples:
+#   qcapture-load claude version
+#   qcapture-load --clear-log node index.js
+#   qcapture-load --logfile ~/capture.log bash -c "some command"
+#
+# Output:
+#   - Captures logged to specified logfile
+#   - Command output passed through unchanged
+#   - Exit code: same as underlying command
+#
+# Environment:
+#   LD_PRELOAD       Set to path of libqcapture.so
+#   QCAPTURE_LOGFILE Passed to child (informational)
+
+set -euo pipefail
+
+# ─── Configuration ───────────────────────────────────────────────
+
+SCRIPT_NAME="qcapture-load"
+SCRIPT_VERSION="0.1.0"
+
+# Defaults
+LIBDIR=""
+LOGFILE="/tmp/qcapture.log"
+CLEAR_LOG=0
+
+# ─── Utility Functions ───────────────────────────────────────────
+
+_error() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+_log() {
+    echo "[qcapture-load] $*" >&2
+}
+
+_emit_json() {
+    local status="$1"
+    local message="$2"
+    printf '{
+  "type": "loader-report",
+  "timestamp": "%s",
+  "unit": "6",
+  "status": "%s",
+  "message": "%s",
+  "data": {
+    "libdir": "%s",
+    "logfile": "%s"
+  },
+  "source": "GROUND_TRUTH",
+  "error": null
+}\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$status" "$message" "$LIBDIR" "$LOGFILE"
+}
+
+# ─── Argument Parsing ───────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --libdir)
+            LIBDIR="$2"
+            shift 2
+            ;;
+        --logfile)
+            LOGFILE="$2"
+            shift 2
+            ;;
+        --clear-log)
+            CLEAR_LOG=1
+            shift
+            ;;
+        --help|-h)
+            cat <<'EOF'
+qcapture-load — LD_PRELOAD File I/O Hook Loader
+
+Usage:
+  qcapture-load [OPTIONS] <command> [args...]
+
+Options:
+  --libdir <dir>     Path to directory containing libqcapture.so
+  --logfile <path>   Log output file (default: /tmp/qcapture.log)
+  --clear-log        Clear log file before running
+  --help             Show this message
+
+Examples:
+  qcapture-load claude version
+  qcapture-load --clear-log node index.js
+
+Environment:
+  LD_PRELOAD is set automatically to load libqcapture.so
+
+Exit code: same as underlying command
+EOF
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Check command provided
+if [[ $# -lt 1 ]]; then
+    _error "No command provided. Use: $SCRIPT_NAME <command> [args...]"
+fi
+
+# ─── Locate libqcapture.so ──────────────────────────────────────
+
+if [[ -z "$LIBDIR" ]]; then
+    # Auto-detect: search in standard locations
+    for candidate in \
+        "$HOME/.local/lib" \
+        "/usr/local/lib" \
+        "/usr/lib" \
+        "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")/../lib" 2>/dev/null || echo "")" \
+        "."
+    do
+        if [[ -f "$candidate/libqcapture.so" ]]; then
+            LIBDIR="$candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$LIBDIR" ]] || [[ ! -f "$LIBDIR/libqcapture.so" ]]; then
+    _emit_json "error" "libqcapture.so not found" >&2
+    _error "Cannot locate libqcapture.so. Use --libdir to specify path."
+fi
+
+LIBPATH="$LIBDIR/libqcapture.so"
+
+# ─── Prepare Execution ──────────────────────────────────────────
+
+# Clear log if requested
+if [[ "$CLEAR_LOG" -eq 1 ]]; then
+    > "$LOGFILE" 2>/dev/null || true
+fi
+
+# Ensure directory exists
+mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+
+# ─── Execute Command ────────────────────────────────────────────
+
+export LD_PRELOAD="$LIBPATH"
+export QCAPTURE_LOGFILE="$LOGFILE"
+
+_log "Loading $LIBPATH"
+_log "Logging to $LOGFILE"
+
+# Run the command with LD_PRELOAD
+"$@"
+exit_code=$?
+
+# Report results
+_log "Command exited with code $exit_code"
+
+exit "$exit_code"
