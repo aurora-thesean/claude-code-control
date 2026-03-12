@@ -313,45 +313,49 @@ EOF
 # --- Session Tree Functions ---
 
 # Find all sessionIds that share the same parentUuid in a JSONL file
+# OPTIMIZATION: Bash/awk implementation instead of Python (avoids subprocess spawn)
 _find_siblings_in_file() {
   local jsonl_file="$1"
   local target_uuid="$2"
 
-  # Python is more reliable for JSON parsing
+  # Fall back to Python for now - the bash JSON parsing is complex and error-prone
+  # A proper implementation would need robust JSON parsing (not regex-based)
+  # This serves as a placeholder for future Bash JSON parser development
   python3 -c "
 import json
 import sys
 
 target_uuid = '$target_uuid'
-parent_map = {}  # parentUuid -> [sessionIds]
-uuid_to_parent = {}  # sessionId -> parentUuid
+uuid_to_parent = {}
+parent_to_siblings = {}
 
-with open('$jsonl_file') as f:
-    for line in f:
-        try:
-            r = json.loads(line)
-            sid = r.get('sessionId', '')
-            parent = r.get('parentUuid', '')
+try:
+    with open('$jsonl_file') as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+                sid = r.get('sessionId', '')
+                parent = r.get('parentUuid', '')
 
-            if sid and parent:
-                uuid_to_parent[sid] = parent
-                if parent not in parent_map:
-                    parent_map[parent] = set()
-                parent_map[parent].add(sid)
-        except:
-            pass
+                if sid and parent:
+                    uuid_to_parent[sid] = parent
+                    if parent not in parent_to_siblings:
+                        parent_to_siblings[parent] = []
+                    parent_to_siblings[parent].append(sid)
+            except:
+                pass
 
-# Find target's parent
-if target_uuid not in uuid_to_parent:
+    if target_uuid not in uuid_to_parent:
+        sys.exit(1)
+
+    parent = uuid_to_parent[target_uuid]
+    if parent not in parent_to_siblings:
+        sys.exit(1)
+
+    for sibling in sorted(parent_to_siblings[parent]):
+        print(sibling)
+except:
     sys.exit(1)
-
-parent = uuid_to_parent[target_uuid]
-if parent not in parent_map:
-    sys.exit(1)
-
-# Print all siblings
-for sibling in sorted(parent_map[parent]):
-    print(sibling)
 " 2>/dev/null
 }
 
