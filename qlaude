@@ -47,6 +47,9 @@ QLAUDE_RESET_TIME_FILE="$AURORA_AGENT_DIR/.qlaude-reset-time"
 # Audit log file
 QLAUDE_AUDIT_LOG="$AURORA_AGENT_DIR/.qlaude-audit.jsonl"
 
+# Integrated sensor stream (Unit 13: qreveng-daemon)
+QREVENG_LOG="$AURORA_AGENT_DIR/qreveng.jsonl"
+
 # --- Utility Functions ---
 
 _log() {
@@ -62,7 +65,7 @@ _ensure_aurora_agent_dir() {
   mkdir -p "$AURORA_AGENT_DIR" 2>/dev/null || true
 }
 
-# Write audit log entry (JSONL format)
+# Write audit log entry (JSONL format) and append to unified sensor stream
 _audit_log() {
   local action="$1"
   local target="$2"
@@ -96,8 +99,39 @@ print(json.dumps(entry))
 PYJSON
   )
 
-  # Append to audit log atomically
+  # Append to local audit log
   echo "$json" >> "$QLAUDE_AUDIT_LOG" 2>/dev/null || true
+
+  # Append to unified sensor stream (Unit 13: qreveng-daemon integration)
+  # This enriches the audit entry with qlaude-specific context
+  local qreveng_entry
+  qreveng_entry=$(QLAUDE_JSON="$json" python3 << 'PYREVENG'
+import json
+import os
+from datetime import datetime, timezone
+
+try:
+    qlaude_entry = json.loads(os.environ.get("QLAUDE_JSON", "{}"))
+    qreveng_entry = {
+        "type": "qlaude-decision",
+        "unit": "14",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source": "GROUND_TRUTH",
+        "data": qlaude_entry,
+        "integration": {
+            "depends_on": ["unit-1", "unit-5", "unit-13"],
+            "source_stream": "qlaude-audit.jsonl"
+        }
+    }
+    print(json.dumps(qreveng_entry))
+except:
+    pass
+PYREVENG
+  )
+
+  if [[ -n "$qreveng_entry" ]]; then
+    echo "$qreveng_entry" >> "$QREVENG_LOG" 2>/dev/null || true
+  fi
 }
 
 # Check AGENTS.md authorization for current agent

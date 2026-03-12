@@ -329,11 +329,46 @@ with open('$jsonl') as f:
 _sense_model() {
   local uuid="$1"
 
-  # Ground truth: Read model from session JSONL message.model field
+  # Ground truth: Use qjsonl-truth (Unit 5) to filter by sessionId, then read model
   if [[ -n "$uuid" ]]; then
     local jsonl_file
     jsonl_file=$(find "$HOME/.claude/projects" -name "${uuid}.jsonl" -type f 2>/dev/null | head -1)
 
+    if [[ -n "$jsonl_file" && -x "$(command -v qjsonl-truth)" ]]; then
+      # Use qjsonl-truth to filter JSONL by sessionId (eliminates subagent contamination)
+      local qjsonl_output
+      qjsonl_output=$(qjsonl-truth "$jsonl_file" "$uuid" 2>/dev/null) || true
+
+      if [[ -n "$qjsonl_output" ]]; then
+        local model
+        model=$(echo "$qjsonl_output" | python3 << 'PYSCRIPT'
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+    records = data.get('data', {}).get('records', [])
+    if records:
+        # Get model from last filtered record
+        last_record = records[-1]
+        if 'message' in last_record and isinstance(last_record['message'], dict):
+            if 'model' in last_record['message']:
+                model = last_record['message']['model']
+                if model and model != '<synthetic>':
+                    print(model)
+except:
+    pass
+PYSCRIPT
+        )
+
+        if [[ -n "$model" ]]; then
+          echo "$model|GROUND_TRUTH|Session JSONL via qjsonl-truth (sessionId filtered)"
+          return
+        fi
+      fi
+    fi
+
+    # Fallback (if qjsonl-truth not available): Read JSONL directly
     if [[ -n "$jsonl_file" ]]; then
       local model
       model=$(JSONL_FILE="$jsonl_file" python3 << 'PYSCRIPT'
@@ -349,7 +384,9 @@ try:
             # Look for message.model field in records - keep scanning to get LATEST
             if 'message' in record and isinstance(record['message'], dict):
                 if 'model' in record['message']:
-                    last_model = record['message']['model']
+                    model = record['message']['model']
+                    if model and model != '<synthetic>':
+                        last_model = model
     if last_model:
         print(last_model)
 except:
@@ -358,7 +395,7 @@ PYSCRIPT
       )
 
       if [[ -n "$model" ]]; then
-        echo "$model|GROUND_TRUTH|Session JSONL message.model field"
+        echo "$model|GROUND_TRUTH|Session JSONL message.model field (direct read)"
         return
       fi
     fi
