@@ -356,27 +356,31 @@ for sibling in sorted(parent_map[parent]):
 }
 
 # Find all siblings of a given UUID across all JSONL files
+# OPTIMIZATION: Use fast JSONL lookup (like qhoami) instead of iterating all files
 _list_siblings() {
   local target_uuid="$1"
 
-  local found=0
-  for project_dir in "$PROJECT_DIR"/*/; do
-    [[ -d "$project_dir" ]] || continue
+  # FAST PATH: Find the JSONL containing this UUID (try direct UUID match first)
+  local jsonl_file
+  jsonl_file=$(find "$PROJECT_DIR" -name "${target_uuid}.jsonl" -type f 2>/dev/null | head -1)
 
-    for jsonl_file in "$project_dir"*.jsonl; do
-      [[ -f "$jsonl_file" ]] || continue
-
-      while IFS= read -r sibling_uuid; do
-        [[ -n "$sibling_uuid" ]] || continue
-        echo "$sibling_uuid"
-        found=1
-      done < <(_find_siblings_in_file "$jsonl_file" "$target_uuid")
+  if [[ -z "$jsonl_file" ]]; then
+    # Fallback to searching if direct match failed
+    for f in "$PROJECT_DIR"/*/*.jsonl; do
+      [[ -f "$f" ]] || continue
+      if grep -q "\"sessionId\".*\"$target_uuid\"" "$f" 2>/dev/null; then
+        jsonl_file="$f"
+        break
+      fi
     done
-  done
+  fi
 
-  if (( found == 0 )); then
+  if [[ -z "$jsonl_file" ]]; then
     return 1
   fi
+
+  # OPTIMIZATION: Use Python only once on the single relevant file
+  _find_siblings_in_file "$jsonl_file" "$target_uuid"
 }
 
 # Compute distance (hop count) to a common ancestor between two UUIDs
