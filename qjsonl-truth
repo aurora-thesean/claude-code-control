@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+qjsonl-truth — Aurora Claude Code Control Plane JSONL Ground Truth Parser
+
+Reads JSONL session records and filters by sessionId matching parent's lineage.
+Emits only records belonging to the specified session, distinguishing own vs subagent models.
+
+Usage:
+    qjsonl-truth /path/to/file.jsonl SESSION_ID
+    qjsonl-truth --self /path/to/file.jsonl
+
+Exit codes: 0=success, 1=error, 2=usage error, 3=no records found
+"""
+
+import sys
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+from typing import Optional, Set, Dict, List, Any
+
+def get_current_session_uuid() -> Optional[str]:
+    """Get current Claude session UUID from env or inotify."""
+    uuid = os.environ.get('CLAUDE_SESSION_UUID')
+    if uuid:
+        return uuid
+
+    tasks_dir = Path.home() / '.claude' / 'tasks'
+    if tasks_dir.exists():
+        for task_path in sorted(tasks_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if task_path.is_dir() and len(task_path.name) == 36:
+                return task_path.name
+
+    session_file = Path.home() / '.aurora-agent' / 'home-session-id'
+    if session_file.exists():
+        try:
+            uuid = session_file.read_text().strip()
+            if uuid and len(uuid) == 36:
+                return uuid
+        except:
+            pass
+
+    return None
+
+def parse_jsonl(file_path: str, session_id: str) -> Dict[str, Any]:
+    """Parse JSONL and filter by sessionId. Returns JSON result."""
+    result = {
+        "type": "jsonl-truth",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "unit": "5",
+        "data": {
+            "source_file": file_path,
+            "session_id_filter": session_id,
+            "records": [],
+            "record_count": 0,
+            "models_found": []
+        },
+        "source": "GROUND_TRUTH",
+        "error": None
+    }
+
+    try:
+        file_obj = Path(file_path)
+        if not file_obj.exists():
+            result["error"] = f"File not found: {file_path}"
+            result["source"] = "ERROR"
+            return result
+
+        # Stream through JSONL, filter by sessionId
+        filtered_records = []
+        models_found = set()
+        record_count = 0
+
+        with open(file_path) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                record_count += 1
+
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                # Keep records matching the session ID
+                if record.get('sessionId') == session_id:
+                    filtered_records.append(record)
+
+                    # Track models (but skip synthetic)
+                    if 'message' in record and isinstance(record['message'], dict):
+                        if 'model' in record['message']:
+                            model = record['message']['model']
+                            if model not in ['<synthetic>']:
+                                models_found.add(model)
+
+        result["data"]["records"] = filtered_records
+        result["data"]["record_count"] = len(filtered_records)
+        result["data"]["models_found"] = sorted(models_found)
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        result["source"] = "ERROR"
+        return result
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: qjsonl-truth /path/to/file.jsonl SESSION_ID", file=sys.stderr)
+        print("       qjsonl-truth --self /path/to/file.jsonl", file=sys.stderr)
+        sys.exit(2)
+
+    file_path = None
+    session_id = None
+    use_self = False
+
+    args = sys.argv[1:]
+
+    if args[0] == '--self':
+        use_self = True
+        if len(args) < 2:
+            print("Usage: qjsonl-truth --self /path/to/file.jsonl", file=sys.stderr)
+            sys.exit(2)
+        file_path = args[1]
+    else:
+        file_path = args[0]
+        if len(args) > 1:
+            session_id = args[1]
+
+    # Get session ID
+    if use_self or not session_id:
+        session_id = get_current_session_uuid()
+        if not session_id:
+            print("Error: Could not determine current session UUID", file=sys.stderr)
+            sys.exit(2)
+
+    # Parse JSONL
+    result = parse_jsonl(file_path, session_id)
+
+    # Output JSON
+    print(json.dumps(result, indent=2))
+
+    # Exit code
+    if result["error"]:
+        sys.exit(1)
+    elif result["data"]["record_count"] == 0:
+        sys.exit(3)
+    else:
+        sys.exit(0)
+
+if __name__ == '__main__':
+    main()
