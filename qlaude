@@ -66,6 +66,7 @@ _ensure_aurora_agent_dir() {
 }
 
 # Write audit log entry (JSONL format)
+# Extended version that supports NESTED_LOA parent context
 _audit_log() {
   local action="$1"
   local target="$2"
@@ -73,6 +74,8 @@ _audit_log() {
   local qc_level="$4"
   local loa_cap="$5"
   local reason="${6:-}"
+  local parent_uuid="${7:-}"  # Optional: parent UUID for nested delegation
+  local warrant_id="${8:-}"   # Optional: warrant ID for decision context
 
   _ensure_aurora_agent_dir
 
@@ -80,6 +83,7 @@ _audit_log() {
   local json
   json=$(AUDIT_ACTION="$action" AUDIT_TARGET="$target" AUDIT_DECISION="$decision" \
          AUDIT_QC_LEVEL="$qc_level" AUDIT_LOA_CAP="$loa_cap" AUDIT_REASON="$reason" \
+         AUDIT_PARENT_UUID="$parent_uuid" AUDIT_WARRANT_ID="$warrant_id" \
          python3 << 'PYJSON'
 import json
 import os
@@ -94,6 +98,14 @@ entry = {
     "loa_cap": int(os.environ.get("AUDIT_LOA_CAP", "0")),
     "reason": os.environ.get("AUDIT_REASON", "")
 }
+
+# Add NESTED_LOA context if available
+parent_uuid = os.environ.get("AUDIT_PARENT_UUID", "").strip()
+warrant_id = os.environ.get("AUDIT_WARRANT_ID", "").strip()
+if parent_uuid:
+    entry["parent_uuid"] = parent_uuid
+if warrant_id:
+    entry["warrant_id"] = warrant_id
 
 print(json.dumps(entry))
 PYJSON
@@ -941,8 +953,8 @@ PYJSON
   _log "Warrant acceptance recorded: $acceptance_file"
   _log "Status: $status (accepted_loa=$accepted_loa)"
 
-  # Log to audit trail
-  _audit_log "warrant-accept" "$warrant_id" "$status" "$(( child_loa / 2 ))" "$child_loa" "$reason"
+  # Log to audit trail (with parent context)
+  _audit_log "warrant-accept" "$warrant_id" "$status" "$(( child_loa / 2 ))" "$child_loa" "$reason" "$parent_uuid" "$warrant_id"
 
   # Return acceptance details
   cat "$acceptance_file"
@@ -1023,8 +1035,8 @@ PYJSON
   _log "Trust score: $trust_score"
   _log "Expires at: $expires_at"
 
-  # Log warrant creation to audit trail
-  _audit_log "warrant-create" "$warrant_id" "PROPOSED" "$(( parent_loa / 2 ))" "$parent_loa" "Delegating task to $child_uuid with LOA_CAP=$proposed_loa_cap"
+  # Log warrant creation to audit trail (with warrant context)
+  _audit_log "warrant-create" "$warrant_id" "PROPOSED" "$(( parent_loa / 2 ))" "$parent_loa" "Delegating task to $child_uuid with LOA_CAP=$proposed_loa_cap" "$parent_uuid" "$warrant_id"
 
   # Output warrant details
   echo "{\"warrant_id\": \"$warrant_id\", \"warrant_file\": \"$warrant_file\"}"
