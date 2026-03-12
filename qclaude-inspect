@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# qclaude-inspect — Aurora Claude Code Debugger Launcher
+#
+# Wrapper that launches claude CLI with Node.js debugger attached on port 9229.
+# Enables breakpoint attachment for context variable capture and inspection.
+#
+# Usage:
+#   qclaude-inspect [OPTIONS]
+#   qclaude-inspect --port 9230           # custom port (default 9229)
+#   qclaude-inspect --help                # show usage
+#
+# Output: Launches Node.js with --inspect flag, then drops to Claude CLI
+# Debugger available at: localhost:9229 (or custom port)
+#
+# Connection instructions:
+#   Terminal 1: qclaude-inspect
+#   Terminal 2: qdebug-attach [--port 9230]
+#
+# Exit codes: 0=normal exit, 1=missing claude binary, 2=usage error
+
+set -euo pipefail
+
+# ─── CONSTANTS ─────────────────────────────────────────────────
+
+# Default debugger port
+INSPECT_PORT="9229"
+
+# Claude binary location (must be Node.js, not Bun)
+# Can be overridden via CLAUDE_CLI env var
+CLAUDE_CLI="${CLAUDE_CLI:-${HOME}/node_modules/@anthropic-ai/claude-code/cli.js}"
+
+# ─── FUNCTIONS ─────────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+qclaude-inspect — Launch Claude Code with Node.js debugger attached
+
+Usage:
+  qclaude-inspect [OPTIONS]
+  qclaude-inspect --port 9230
+  qclaude-inspect --help
+
+Options:
+  --port PORT        Debugger listen port (default: 9229)
+  --help            Show this message
+
+Environment:
+  INSPECT_PORT      Override default debugger port (env var)
+  CLAUDE_CLI        Override Claude binary path (env var)
+
+Instructions:
+  1. Terminal 1: qclaude-inspect
+     Waits for debugger connection before starting CLI
+
+  2. Terminal 2: qdebug-attach [--port 9230]
+     Connects to debugger, sets breakpoint, captures context
+
+Example:
+  $ qclaude-inspect &
+  Debugger listening on ws://127.0.0.1:9229/...
+
+  $ qdebug-attach
+  [ATTACHED] Connected to localhost:9229
+  [BREAKPOINT] Set in cli.js (message creation)
+  [WAITING] Waiting for breakpoint hit...
+
+Notes:
+  - Claude CLI will pause until debugger connects (--inspect-brk)
+  - Press ENTER in debugger terminal to continue after context capture
+  - All Claude Code arguments pass through to CLI
+  - Not recommended for production (performance overhead)
+
+Version: Unit 8 (2026-03-12)
+EOF
+}
+
+# Validate Claude binary exists
+validate_binary() {
+    if [[ ! -f "$CLAUDE_CLI" ]]; then
+        cat >&2 <<EOF
+ERROR: Claude CLI not found at:
+  $CLAUDE_CLI
+
+Ensure claude-code is installed:
+  npm install -g @anthropic-ai/claude-code
+
+Or set CLAUDE_CLI env var to correct path.
+EOF
+        return 1
+    fi
+
+    # Verify it's a Node.js script, not Bun binary
+    if head -1 "$CLAUDE_CLI" | grep -q "^#!/usr/bin/env node" || file "$CLAUDE_CLI" | grep -q "Node.js"; then
+        return 0
+    fi
+}
+
+# ─── MAIN ─────────────────────────────────────────────────────
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port)
+            INSPECT_PORT="$2"
+            shift 2
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        *)
+            # Pass through to claude CLI
+            break
+            ;;
+    esac
+done
+
+# Validate environment
+if ! validate_binary; then
+    exit 1
+fi
+
+# Verify port is numeric
+if ! [[ "$INSPECT_PORT" =~ ^[0-9]+$ ]] || (( INSPECT_PORT < 1 || INSPECT_PORT > 65535 )); then
+    echo "ERROR: Invalid port: $INSPECT_PORT (must be 1-65535)" >&2
+    exit 2
+fi
+
+# Log startup
+cat >&2 <<EOF
+[qclaude-inspect] Starting Claude with debugger
+  Port: localhost:$INSPECT_PORT
+  CLI: $CLAUDE_CLI
+  PID: $$
+  Time: $(date -Iseconds)
+
+[INFO] Debugger will pause CLI at startup (--inspect-brk)
+[INFO] Waiting for debugger connection before proceeding...
+
+To connect debugger:
+  qdebug-attach --port $INSPECT_PORT
+EOF
+
+# Launch Node.js with debugger, passing through remaining args to CLI
+# --inspect-brk pauses execution until debugger connects
+node --inspect-brk="127.0.0.1:$INSPECT_PORT" "$CLAUDE_CLI" "$@"
