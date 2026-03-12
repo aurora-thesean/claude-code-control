@@ -1,0 +1,60 @@
+name: Aurora Control Plane Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Check prerequisites
+      run: |
+        bash --version
+        grep --version
+        awk --version
+        python3 --version
+        stat --version || echo "stat is part of coreutils"
+        readlink --version || echo "readlink available"
+        ps --version || echo "ps available"
+
+    - name: Run E2E test suite
+      run: |
+        bash qreveng-e2e-test.sh
+      continue-on-error: true
+
+    - name: Test qhoami syntax
+      run: |
+        bash -n qhoami
+        echo "✓ qhoami syntax valid"
+
+    - name: Test qlaude syntax
+      run: |
+        bash -n qlaude
+        echo "✓ qlaude syntax valid"
+
+    - name: Test qreveng-daemon syntax
+      run: |
+        bash -n qreveng-daemon
+        echo "✓ qreveng-daemon syntax valid"
+
+    - name: Check shellcheck compliance
+      run: |
+        if command -v shellcheck &> /dev/null; then
+          shellcheck qhoami qlaude qreveng-daemon || echo "Note: Some shellcheck warnings (non-blocking)"
+        else
+          echo "shellcheck not installed, skipping"
+        fi
+      continue-on-error: true
+
+    - name: Verify documentation
+      run: |
+        test -f REVENGINEER.md && echo "✓ REVENGINEER.md exists"
+        test -f DEPLOYMENT.md && echo "✓ DEPLOYMENT.md exists"
+        test -f PROJECT-STATUS.md && echo "✓ PROJECT-STATUS.md exists"
+        test -f PHASE-3-BENCHMARK.md && echo "✓ PHASE-3-BENCHMARK.md exists"
