@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+# Phase 10 Unit 4: Wordgarden Registry Client
+# Queries wordgarden.dev for agent locations via DNS service discovery
+# Falls back to LAN scan if registry unavailable
+#
+# Usage:
+#   qwordgarden-registry <uuid> [--timeout 10] [--cache-ttl 300]
+#   qwordgarden-registry --sync [--timeout 10]
+#   qwordgarden-registry --list [--format json|text]
+
+import socket
+import json
+import argparse
+import sys
+import logging
+import os
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+import subprocess
+import time
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[qwordgarden-registry] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
+REGISTRY_CACHE = Path.home() / '.aurora-agent' / 'wordgarden-registry.jsonl'
+REGISTRY_HOST = 'wordgarden.dev'
+DEFAULT_PORT = 9231
+DEFAULT_CACHE_TTL = 300  # 5 minutes
+
+
+def is_cache_valid(cache_entry):
+    """Check if cache entry is still valid"""
+    if 'timestamp' not in cache_entry:
+        return False
+
+    cached_at = datetime.fromisoformat(cache_entry['timestamp'])
+    ttl = cache_entry.get('cache_ttl', DEFAULT_CACHE_TTL)
+
+    return datetime.now(timezone.utc) - cached_at < timedelta(seconds=ttl)
+
+
+def read_cache(uuid):
+    """Read agent location from cache"""
+    if not REGISTRY_CACHE.exists():
+        return None
+
+    try:
+        with open(REGISTRY_CACHE, 'r') as f:
+            for line in f:
+                entry = json.loads(line.strip())
+                if entry.get('uuid') == uuid:
+                    if is_cache_valid(entry):
+                        return entry
+                    else:
+                        # Return expired entry but mark it
+                        entry['cache_status'] = 'expired'
+                        return entry
+    except Exception as e:
+        logger.warning(f'Error reading cache: {e}')
+
+    return None
+
+
+def write_cache(uuid, location, port, source='dns', cache_ttl=DEFAULT_CACHE_TTL):
+    """Write agent location to cache"""
+    try:
+        REGISTRY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+
+        entry = {
+            'uuid': uuid,
+            'hostname': location,
+            'port': port,
+            'source': source,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'cache_ttl': cache_ttl
+        }
+
+        with open(REGISTRY_CACHE, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+
+        return entry
+    except Exception as e:
+        logger.warning(f'Error writing cache: {e}')
+        return None
+
+
+def query_wordgarden_dns(uuid, timeout=10):
+    """Query wordgarden.dev for agent location via DNS"""
+    try:
+        hostname = f'agent-{uuid}.{REGISTRY_HOST}'
+        logger.debug(f'Querying DNS: {hostname}')
+
+        # Use getaddrinfo for DNS resolution
+        results = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM, timeout=timeout)
+
+        if results:
+            ip = results[0][4][0]
+            logger.info(f'Found agent {uuid} at {ip}')
+            return ip
+    except socket.gaierror:
+        logger.debug(f'DNS lookup failed for {uuid} (not in Wordgarden)')
+    except socket.timeout:
+        logger.debug(f'DNS timeout for {uuid}')
+    except Exception as e:
+        logger.debug(f'DNS query error: {e}')
+
+    return None
+
+
+def query_wordgarden_api(uuid, timeout=10):
+    """Query Wordgarden API for agent location"""
+    try:
+        url = f'https://{REGISTRY_HOST}/api/v1/agents/{uuid}/location'
+        response = subprocess.run(
+            ['curl', '-s', '--max-time', str(timeout), url],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2
+        )
+
+        if response.returncode == 0:
+            data = json.loads(response.stdout)
+            if 'hostname' in data:
+                logger.info(f'Found agent {uuid} via API: {data["hostname"]}')
+                return data['hostname']
+    except Exception as e:
+        logger.debug(f'API query error: {e}')
+
+    return None
+
+
+def fallback_to_lan_scan(uuid):
+    """Fall back to LAN scan if Wordgarden unavailable"""
+    logger.info(f'Wordgarden unavailable, falling back to LAN scan for {uuid}')
+
+    try:
+        # Try to use existing qlan-discovery tool if available
+        cmd_path = os.path.expanduser('~/.local/bin/qlan-discovery')
+        if os.path.exists(cmd_path):
+            response = subprocess.run(
+                [cmd_path, '--json'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if response.returncode == 0:
+                try:
+                    data = json.loads(response.stdout)
+                    agents = data.get('agents', [])
+                    for agent in agents:
+                        if agent.get('uuid') == uuid:
+                            return agent.get('host')
+                except json.JSONDecodeError:
+                    pass
+    except Exception as e:
+        logger.debug(f'LAN scan fallback error: {e}')
+
+    return None
+
+
+def resolve_agent_location(uuid, timeout=10, use_api=False):
+    """Resolve agent location via DNS or API, with LAN fallback"""
+
+    # Check cache first
+    cached = read_cache(uuid)
+    if cached and cached.get('cache_status') != 'expired':
+        logger.info(f'Cache hit for {uuid}: {cached["hostname"]}:{cached["port"]}')
+        return cached
+
+    logger.info(f'Resolving agent {uuid}...')
+
+    # Try Wordgarden DNS first (faster, no HTTPS)
+    location = query_wordgarden_dns(uuid, timeout)
+    if location:
+        entry = write_cache(uuid, location, DEFAULT_PORT, source='dns')
+        return entry
+
+    # Try Wordgarden API if enabled
+    if use_api:
+        location = query_wordgarden_api(uuid, timeout)
+        if location:
+            entry = write_cache(uuid, location, DEFAULT_PORT, source='api')
+            return entry
+
+    # Fall back to LAN scan
+    location = fallback_to_lan_scan(uuid)
+    if location:
+        entry = write_cache(uuid, location, DEFAULT_PORT, source='lan_scan')
+        return entry
+
+    logger.error(f'Could not resolve agent {uuid}')
+    return None
+
+
+def list_cache(format='text'):
+    """List all cached agent locations"""
+    if not REGISTRY_CACHE.exists():
+        logger.info('No cache file found')
+        return
+
+    agents = []
+    try:
+        with open(REGISTRY_CACHE, 'r') as f:
+            for line in f:
+                entry = json.loads(line.strip())
+                # Check cache validity
+                entry['valid'] = is_cache_valid(entry)
+                agents.append(entry)
+    except Exception as e:
+        logger.error(f'Error reading cache: {e}')
+        return
+
+    if format == 'json':
+        print(json.dumps(agents, indent=2))
+    else:
+        for agent in agents:
+            status = '✓' if agent['valid'] else '✗'
+            print(f'{status} {agent["uuid"][:8]}... → {agent["hostname"]}:{agent["port"]} ({agent["source"]})')
+
+
+def sync_registry(timeout=10):
+    """Sync with Wordgarden registry - clear expired entries, check health"""
+    logger.info('Syncing registry...')
+
+    if not REGISTRY_CACHE.exists():
+        logger.info('No cache to sync')
+        return
+
+    valid_entries = []
+    invalid_count = 0
+
+    try:
+        with open(REGISTRY_CACHE, 'r') as f:
+            for line in f:
+                entry = json.loads(line.strip())
+                if is_cache_valid(entry):
+                    valid_entries.append(entry)
+                else:
+                    invalid_count += 1
+
+        # Write back only valid entries
+        with open(REGISTRY_CACHE, 'w') as f:
+            for entry in valid_entries:
+                f.write(json.dumps(entry) + '\n')
+
+        logger.info(f'Removed {invalid_count} expired entries, {len(valid_entries)} valid')
+    except Exception as e:
+        logger.error(f'Sync error: {e}')
+
+
+def health_check(uuid, timeout=5):
+    """Check if agent is still responsive"""
+    entry = read_cache(uuid)
+    if not entry:
+        logger.error(f'Agent {uuid} not in cache')
+        return False
+
+    hostname = entry['hostname']
+    port = entry['port']
+
+    try:
+        response = subprocess.run(
+            ['curl', '-s', '--max-time', str(timeout),
+             f'http://{hostname}:{port}/health'],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1
+        )
+
+        if response.returncode == 0 and 'ok' in response.stdout:
+            logger.info(f'Agent {uuid} at {hostname}:{port} is responsive')
+            return True
+    except Exception as e:
+        logger.debug(f'Health check error: {e}')
+
+    logger.warning(f'Agent {uuid} at {hostname}:{port} is not responsive')
+    return False
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Wordgarden registry client for agent location discovery'
+    )
+    parser.add_argument('uuid', nargs='?', help='Agent UUID to resolve')
+    parser.add_argument('--timeout', type=int, default=10, help='Query timeout in seconds')
+    parser.add_argument('--cache-ttl', type=int, default=DEFAULT_CACHE_TTL, help='Cache TTL in seconds')
+    parser.add_argument('--use-api', action='store_true', help='Use Wordgarden API (slower, more reliable)')
+    parser.add_argument('--sync', action='store_true', help='Sync/cleanup cache')
+    parser.add_argument('--list', action='store_true', help='List cached agents')
+    parser.add_argument('--format', choices=['json', 'text'], default='text', help='Output format')
+    parser.add_argument('--health-check', help='Check agent health')
+    parser.add_argument('--clear-cache', action='store_true', help='Clear all cache')
+
+    args = parser.parse_args()
+
+    # Handle special operations
+    if args.sync:
+        sync_registry(args.timeout)
+        return
+
+    if args.list or (not args.uuid and not args.health_check and not args.clear_cache):
+        list_cache(args.format)
+        return
+
+    if args.clear_cache:
+        if REGISTRY_CACHE.exists():
+            REGISTRY_CACHE.unlink()
+            logger.info('Cache cleared')
+        return
+
+    if args.health_check:
+        if health_check(args.health_check, args.timeout):
+            sys.exit(0)
+        else:
+            sys.exit(1)
+
+    if args.uuid:
+        result = resolve_agent_location(args.uuid, args.timeout, args.use_api)
+        if result:
+            # Output in qlaude-compatible format
+            output = {
+                'uuid': result['uuid'],
+                'hostname': result['hostname'],
+                'port': result['port'],
+                'source': result['source'],
+                'type': 'location_resolved'
+            }
+            print(json.dumps(output))
+            sys.exit(0)
+        else:
+            print(json.dumps({
+                'error': f'Could not resolve {args.uuid}',
+                'type': 'resolution_failed'
+            }), file=sys.stderr)
+            sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
