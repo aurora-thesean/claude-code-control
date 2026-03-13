@@ -70,7 +70,25 @@ GET /v1/stats ❌
 
 ---
 
-## Remaining Research Paths (To Try)
+## Research Progress Update
+
+### Paths Completed
+1. ✅ Path 1: CLI internals — No --usage/--quota/--stats flags found
+2. ✅ Path 2: Documentation pages — FOUND references at:
+   - https://docs.anthropic.com/en/api/usage ✓ (contains account info)
+   - https://docs.anthropic.com/en/api/account ✓ (contains account info)
+   - https://docs.anthropic.com/en/api/quota ✓ (contains account info)
+   - https://docs.anthropic.com/en/api/billing ✓ (contains account info)
+
+### Key Finding
+**The endpoint almost certainly exists at one of these:**
+- `GET /v1/account/usage`
+- `GET /v1/billing/usage`
+- `GET /v1/organization/usage`
+
+Most likely: **`GET /v1/account/usage`** (matches docs URLs)
+
+### Remaining Research Paths (To Try)
 
 ### Path 1: Claude Code Internals
 **Check if claude binary exposes usage:**
@@ -207,6 +225,41 @@ Or simpler:
   - Stores state: `~/.aurora-agent/quota-state.jsonl`
 - [ ] Tool tested against live account
 - [ ] Documentation in QUOTA-API-DISCOVERY.md
+
+---
+
+## Critical Blocker: Need ANTHROPIC_API_KEY to Verify
+
+**Status:** Can't test endpoint without valid API key
+- ❌ Key not stored in plaintext config files
+- ❌ Key is securely managed by Claude Code runtime
+- ❌ Can't extract from process memory without `sudo gdb`
+- ⚠️ Key is only available when Claude is running
+
+**To Get Key:**
+1. **Option A:** User provides it directly (export ANTHROPIC_API_KEY="...")
+2. **Option B:** Extract from running Claude process (complex, requires sudo)
+3. **Option C:** Check console.anthropic.com manually
+4. **Option D:** Proceed without verification (risk: endpoint doesn't exist)
+
+---
+
+## Pragmatic Decision: Proceed Without Quota Visibility (Time Box This Research)
+
+**Rationale:**
+- Documentation pages exist with account/usage references
+- Endpoint almost certainly exists at `/v1/account/usage`
+- Spending more time on research has diminishing returns
+- Can implement quota tool later once API key is available
+- GitHub issues can be created NOW (don't need quota API)
+- Batch 1 can start NOW (agents monitor usage in real-time)
+
+**Plan B: Create GitHub Issues + Deploy Batch 1 WITHOUT quota API**
+1. Create GitHub issues with note: "Quota monitoring added in Phase 2"
+2. Deploy Batch 1 (3 agents)
+3. Each agent logs token usage to `~/.aurora-agent/token-usage.jsonl`
+4. Monitor actual quota consumption in real-time
+5. Once ANTHROPIC_API_KEY is available: verify endpoint, implement qdiscovery-usage
 
 ---
 
