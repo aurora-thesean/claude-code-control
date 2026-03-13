@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# Phase 10 Unit 3: LAN Agent Discovery
+# Scans 192.168.0.0/24 subnet for Claude Code instances with warrant listeners
+#
+# Usage:
+#   qlan-discovery [--subnet 192.168.0.0/24] [--port 9231] [--timeout 5]
+
+import socket
+import json
+import argparse
+import sys
+import logging
+from pathlib import Path
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import subprocess
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[qlan-discovery] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
+AGENT_REGISTRY = Path.home() / '.aurora-agent' / 'lan-agents.jsonl'
+
+
+def scan_host(host, port, timeout):
+    """Check if host has warrant receiver listening"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if result == 0:
+            # Port is open, try health check
+            try:
+                response = subprocess.run(
+                    ['curl', '-s', '--max-time', str(timeout), 
+                     f'http://{host}:{port}/health'],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout + 1
+                )
+                if response.returncode == 0 and 'ok' in response.stdout:
+                    return {'host': host, 'port': port, 'status': 'responding'}
+            except:
+                pass
+            
+            return {'host': host, 'port': port, 'status': 'port_open'}
+        return None
+    except Exception as e:
+        return None
+
+
+def query_agent(host, port, timeout):
+    """Query agent for session info via qhoami"""
+    try:
+        # Try SSH to query qhoami on remote
+        cmd = f'ssh -o ConnectTimeout={timeout} -o StrictHostKeyChecking=no {host} qhoami --self'
+        response = subprocess.run(
+            cmd.split(),
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2
+        )
+        
+        if response.returncode == 0:
+            try:
+                agent_info = json.loads(response.stdout)
+                return {
+                    'host': host,
+                    'port': port,
+                    'uuid': agent_info.get('uuid'),
+                    'model': agent_info.get('model', {}).get('value'),
+                    'qc_level': agent_info.get('qc_level', {}).get('value'),
+                    'loa_cap': agent_info.get('loa_cap', 'unknown')
+                }
+            except json.JSONDecodeError:
+                pass
+        
+        return None
+    except Exception as e:
+        return None
+
+
+def scan_subnet(subnet, port, timeout, max_workers=10):
+    """Scan subnet for Claude Code instances"""
+    
+    # Parse subnet
+    try:
+        base, mask = subnet.split('/')
+        parts = base.split('.')
+        if len(parts) != 4 or int(mask) != 24:
+            logger.error(f'Invalid subnet format: {subnet} (use X.X.X.0/24)')
+            return []
+    except:
+        logger.error(f'Invalid subnet format: {subnet}')
+        return []
+    
+    # Generate IP range
+    base_ip = '.'.join(parts[:3])
+    ips = [f'{base_ip}.{i}' for i in range(1, 255)]
+    
+    logger.info(f'Scanning {len(ips)} hosts in {subnet}...')
+    
+    agents_found = []
+    
+    # Scan for open ports (fast)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(scan_host, ip, port, timeout): ip for ip in ips}
+        
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 50 == 0:
+                logger.info(f'Progress: {completed}/{len(ips)}...')
+            
+            result = future.result()
+            if result:
+                agents_found.append(result)
+                logger.info(f'Found port {port} open on {result["host"]}')
+    
+    logger.info(f'Port scan complete. Found {len(agents_found)} candidates.')
+    
+    # Query agents for detailed info (slower, fewer threads)
+    detailed_agents = []
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(query_agent, a['host'], a['port'], timeout): a for a in agents_found}
+        
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                detailed_agents.append(result)
+                logger.info(f'Queried {result["host"]}: {result.get("model", "unknown")} (UUID: {result.get("uuid", "unknown")[:8]}...)')
+    
+    return detailed_agents
+
+
+def save_registry(agents):
+    """Save agent registry to JSONL"""
+    AGENT_REGISTRY.parent.mkdir(parents=True, exist_ok=True)
+    
+    registry_entry = {
+        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'scan_type': 'lan_discovery',
+        'agents_found': len(agents),
+        'agents': agents
+    }
+    
+    with open(AGENT_REGISTRY, 'a') as f:
+        f.write(json.dumps(registry_entry) + '\n')
+    
+    logger.info(f'Agent registry updated: {AGENT_REGISTRY}')
+
+
+def print_registry(agents):
+    """Print registry in human-readable format"""
+    print("\n" + "="*80)
+    print("LAN Agent Discovery Results")
+    print("="*80)
+    
+    if not agents:
+        print("No agents found on LAN")
+        return
+    
+    for agent in agents:
+        print(f"\nAgent: {agent['host']}:{agent['port']}")
+        if 'uuid' in agent:
+            print(f"  UUID:     {agent['uuid']}")
+        if 'model' in agent:
+            print(f"  Model:    {agent['model']}")
+        if 'qc_level' in agent:
+            print(f"  QC Level: {agent['qc_level']}")
+        print(f"  Status:   Responding")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='LAN Agent Discovery')
+    parser.add_argument('--subnet', default='192.168.0.0/24', help='Subnet to scan (default: 192.168.0.0/24)')
+    parser.add_argument('--port', type=int, default=9231, help='Port to scan for (default: 9231)')
+    parser.add_argument('--timeout', type=int, default=3, help='Connection timeout in seconds (default: 3)')
+    parser.add_argument('--workers', type=int, default=10, help='Max parallel scanners (default: 10)')
+    parser.add_argument('--json', action='store_true', help='Output as JSON only')
+    
+    args = parser.parse_args()
+    
+    agents = scan_subnet(args.subnet, args.port, args.timeout, args.workers)
+    
+    save_registry(agents)
+    
+    if not args.json:
+        print_registry(agents)
+    else:
+        print(json.dumps(agents, indent=2))
+    
+    return 0 if agents else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
