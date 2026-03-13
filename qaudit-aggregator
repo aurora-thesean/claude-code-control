@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+# Phase 10 Unit 5: Distributed Audit Log Aggregation
+# Collects audit entries from all discovered agents, merges by timestamp
+# Provides query interface for parent agent oversight
+#
+# Usage:
+#   qaudit-aggregator --collect [--agents-file ~/.aurora-agent/lan-agents.jsonl]
+#   qaudit-aggregator --query <parent_uuid> [--format json|text]
+#   qaudit-aggregator --merge <local_log> <remote_log> [--output merged.jsonl]
+#   qaudit-aggregator --verify <parent_uuid> [--check-completeness]
+
+import json
+import argparse
+import sys
+import logging
+import os
+from pathlib import Path
+from datetime import datetime, timezone
+import subprocess
+from collections import defaultdict
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[qaudit-aggregator] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
+LOCAL_AUDIT_LOG = Path.home() / '.aurora-agent' / '.qlaude-audit.jsonl'
+CONSOLIDATED_AUDIT_LOG = Path.home() / '.aurora-agent' / '.qlaude-audit-consolidated.jsonl'
+LAN_AGENTS_REGISTRY = Path.home() / '.aurora-agent' / 'lan-agents.jsonl'
+REMOTE_AUDIT_CACHE = Path.home() / '.aurora-agent' / '.audit-remote-cache'
+
+
+def read_local_audit_log(filepath=LOCAL_AUDIT_LOG):
+    """Read local audit log, return list of entries"""
+    if not filepath.exists():
+        logger.warning(f'Local audit log not found: {filepath}')
+        return []
+
+    entries = []
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    entries.append(entry)
+                except json.JSONDecodeError:
+                    logger.warning(f'Skipping malformed entry: {line[:50]}...')
+    except Exception as e:
+        logger.error(f'Error reading local audit log: {e}')
+
+    return entries
+
+
+def fetch_remote_audit_log(agent_uuid, agent_host, agent_port=9231, timeout=10):
+    """Fetch audit log from remote agent via SSH or HTTP"""
+    entries = []
+
+    try:
+        # Try SSH first (more reliable for local/LAN agents)
+        remote_path = f'~/.aurora-agent/.qlaude-audit.jsonl'
+        cmd = f'ssh -o ConnectTimeout={timeout} -o StrictHostKeyChecking=no {agent_host} cat {remote_path}'
+
+        response = subprocess.run(
+            cmd.split(),
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2
+        )
+
+        if response.returncode == 0:
+            for line in response.stdout.strip().split('\n'):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line.strip())
+                    # Add source annotation
+                    entry['_audit_source'] = agent_uuid
+                    entries.append(entry)
+                except json.JSONDecodeError:
+                    logger.warning(f'Malformed entry from {agent_uuid}: {line[:50]}...')
+
+            logger.info(f'Fetched {len(entries)} audit entries from {agent_uuid}')
+            return entries
+    except Exception as e:
+        logger.debug(f'SSH fetch failed for {agent_uuid}: {e}')
+
+    # Fallback: Try HTTP API
+    try:
+        response = subprocess.run(
+            ['curl', '-s', '--max-time', str(timeout),
+             f'http://{agent_host}:{agent_port}/audit'],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1
+        )
+
+        if response.returncode == 0:
+            try:
+                data = json.loads(response.stdout)
+                for entry in data.get('entries', []):
+                    entry['_audit_source'] = agent_uuid
+                    entries.append(entry)
+
+                logger.info(f'Fetched {len(entries)} audit entries from {agent_uuid} via HTTP')
+                return entries
+            except json.JSONDecodeError:
+                logger.debug(f'HTTP response not JSON: {response.stdout[:50]}')
+    except Exception as e:
+        logger.debug(f'HTTP fetch failed for {agent_uuid}: {e}')
+
+    logger.warning(f'Could not fetch audit log from {agent_uuid} at {agent_host}')
+    return []
+
+
+def read_agent_registry(registry_file=LAN_AGENTS_REGISTRY):
+    """Read agent registry to get list of known agents"""
+    agents = {}
+
+    if not registry_file.exists():
+        logger.warning(f'Agent registry not found: {registry_file}')
+        return agents
+
+    try:
+        with open(registry_file, 'r') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    agent_uuid = entry.get('uuid')
+                    if agent_uuid:
+                        agents[agent_uuid] = entry
+                except json.JSONDecodeError:
+                    pass
+    except Exception as e:
+        logger.error(f'Error reading agent registry: {e}')
+
+    return agents
+
+
+def collect_from_all_agents(registry_file=LAN_AGENTS_REGISTRY, output_file=CONSOLIDATED_AUDIT_LOG):
+    """Collect audit logs from all known agents"""
+    logger.info('Starting audit log collection from all agents...')
+
+    # Get local entries
+    local_entries = read_local_audit_log()
+    all_entries = local_entries.copy()
+    logger.info(f'Collected {len(local_entries)} entries from local agent')
+
+    # Get agent registry
+    agents = read_agent_registry(registry_file)
+    logger.info(f'Found {len(agents)} agents in registry')
+
+    # Fetch from each agent
+    for agent_uuid, agent_info in agents.items():
+        agent_host = agent_info.get('host') or agent_info.get('hostname')
+        agent_port = agent_info.get('port', 9231)
+
+        if not agent_host:
+            logger.warning(f'No host information for {agent_uuid}')
+            continue
+
+        remote_entries = fetch_remote_audit_log(agent_uuid, agent_host, agent_port)
+        all_entries.extend(remote_entries)
+
+    # Sort by timestamp
+    try:
+        all_entries.sort(key=lambda x: x.get('timestamp', ''), reverse=False)
+    except Exception as e:
+        logger.warning(f'Error sorting entries: {e}')
+
+    # Write consolidated log
+    try:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, 'w') as f:
+            for entry in all_entries:
+                f.write(json.dumps(entry) + '\n')
+
+        logger.info(f'Wrote {len(all_entries)} entries to {output_file}')
+        return all_entries
+    except Exception as e:
+        logger.error(f'Error writing consolidated log: {e}')
+        return all_entries
+
+
+def query_by_parent_uuid(parent_uuid, log_file=CONSOLIDATED_AUDIT_LOG):
+    """Query consolidated log for entries related to a parent UUID"""
+    entries = []
+
+    log_file = Path(log_file) if not isinstance(log_file, Path) else log_file
+
+    if not log_file.exists():
+        logger.warning(f'Consolidated log not found: {log_file}')
+        return entries
+
+    try:
+        with open(log_file, 'r') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    if entry.get('parent_uuid') == parent_uuid or \
+                       entry.get('warrant_id') and parent_uuid in entry.get('warrant_id', ''):
+                        entries.append(entry)
+                except json.JSONDecodeError:
+                    pass
+    except Exception as e:
+        logger.error(f'Error querying log: {e}')
+
+    return entries
+
+
+def merge_logs(local_log, remote_log, output_log=None):
+    """Merge two audit logs, removing duplicates, sorting by timestamp"""
+    all_entries = []
+
+    # Read both logs
+    for log_file in [local_log, remote_log]:
+        if not os.path.exists(log_file):
+            logger.warning(f'Log file not found: {log_file}')
+            continue
+
+        try:
+            with open(log_file, 'r') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line.strip())
+                        all_entries.append(entry)
+                    except json.JSONDecodeError:
+                        pass
+        except Exception as e:
+            logger.warning(f'Error reading {log_file}: {e}')
+
+    # Deduplicate by (timestamp, operation, agent)
+    seen = set()
+    unique_entries = []
+
+    for entry in all_entries:
+        key = (entry.get('timestamp'), entry.get('operation'), entry.get('_audit_source', 'local'))
+        if key not in seen:
+            seen.add(key)
+            unique_entries.append(entry)
+
+    # Sort by timestamp
+    try:
+        unique_entries.sort(key=lambda x: x.get('timestamp', ''), reverse=False)
+    except Exception as e:
+        logger.warning(f'Error sorting: {e}')
+
+    # Write output
+    if output_log:
+        try:
+            Path(output_log).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_log, 'w') as f:
+                for entry in unique_entries:
+                    f.write(json.dumps(entry) + '\n')
+            logger.info(f'Merged {len(unique_entries)} unique entries to {output_log}')
+        except Exception as e:
+            logger.error(f'Error writing output: {e}')
+
+    return unique_entries
+
+
+def verify_completeness(parent_uuid, consolidated_log=CONSOLIDATED_AUDIT_LOG):
+    """Verify all decisions for a warrant are present"""
+    entries = query_by_parent_uuid(parent_uuid, consolidated_log)
+
+    if not entries:
+        logger.warning(f'No entries found for parent {parent_uuid}')
+        return False
+
+    # Group by decision_num
+    decisions = defaultdict(list)
+    for entry in entries:
+        decision_num = entry.get('decision_num')
+        if decision_num:
+            decisions[decision_num].append(entry)
+
+    # Check for gaps
+    max_decision = max(decisions.keys()) if decisions else 0
+    for i in range(1, max_decision + 1):
+        if i not in decisions:
+            logger.warning(f'Gap in decisions: missing decision_num={i}')
+            return False
+
+    logger.info(f'✓ Complete decision chain: {max_decision} decisions, all present')
+    return True
+
+
+def format_query_result(entries, format='text'):
+    """Format query results for output"""
+    if format == 'json':
+        return json.dumps(entries, indent=2)
+    else:
+        # Text format
+        lines = []
+        for entry in entries:
+            timestamp = entry.get('timestamp', 'unknown')
+            operation = entry.get('operation', 'unknown')
+            decision = entry.get('decision', 'unknown')
+            agent = entry.get('_audit_source', 'local')
+            lines.append(f'{timestamp} | {agent[:8]}... | {operation} | {decision}')
+        return '\n'.join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Distributed audit log aggregation and query'
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+
+    # Collect subcommand
+    collect_parser = subparsers.add_parser('collect', help='Collect audit logs from all agents')
+    collect_parser.add_argument('--agents-file', default=str(LAN_AGENTS_REGISTRY),
+                               help='Agent registry file')
+    collect_parser.add_argument('--output', default=str(CONSOLIDATED_AUDIT_LOG),
+                              help='Output consolidated log')
+
+    # Query subcommand
+    query_parser = subparsers.add_parser('query', help='Query consolidated log')
+    query_parser.add_argument('parent_uuid', help='Parent UUID to query')
+    query_parser.add_argument('--format', choices=['json', 'text'], default='text')
+    query_parser.add_argument('--log-file', default=str(CONSOLIDATED_AUDIT_LOG))
+
+    # Merge subcommand
+    merge_parser = subparsers.add_parser('merge', help='Merge two audit logs')
+    merge_parser.add_argument('local_log', help='Local audit log')
+    merge_parser.add_argument('remote_log', help='Remote audit log')
+    merge_parser.add_argument('--output', help='Output merged log')
+
+    # Verify subcommand
+    verify_parser = subparsers.add_parser('verify', help='Verify decision completeness')
+    verify_parser.add_argument('parent_uuid', help='Parent UUID to verify')
+    verify_parser.add_argument('--log-file', default=str(CONSOLIDATED_AUDIT_LOG))
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    # Execute command
+    if args.command == 'collect':
+        entries = collect_from_all_agents(args.agents_file, args.output)
+        print(json.dumps({'status': 'collected', 'count': len(entries)}))
+
+    elif args.command == 'query':
+        entries = query_by_parent_uuid(args.parent_uuid, args.log_file)
+        print(format_query_result(entries, args.format))
+
+    elif args.command == 'merge':
+        entries = merge_logs(args.local_log, args.remote_log, args.output)
+        print(json.dumps({'status': 'merged', 'count': len(entries), 'output': args.output}))
+
+    elif args.command == 'verify':
+        success = verify_completeness(args.parent_uuid, args.log_file)
+        sys.exit(0 if success else 1)
+
+
+if __name__ == '__main__':
+    main()
