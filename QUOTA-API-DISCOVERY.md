@@ -77,13 +77,22 @@ GET /v1/stats ❌
 ```bash
 # Look for usage-related CLI flags
 claude --help | grep -i "usage\|quota\|stats\|billing"
+# Result: No usage/quota/stats/billing flags found ❌
 
 # Look for logs
 ls -la ~/.claude/logs/
+# Result: No logs/ directory found
 
 # Check if there's a usage command
 claude /usage
+# Result: Would require interactive session
 ```
+
+**Findings:**
+- ❌ No --usage, --quota, --stats, or --billing flags in claude CLI
+- ❌ No ~/.claude/logs/ directory with usage records
+- ⚠️  Telemetry files exist at ~/.claude/telemetry/ but contain event logs, not usage
+- Need to try other paths
 
 ### Path 2: Response Headers
 **Many APIs expose usage in response headers:**
