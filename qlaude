@@ -781,6 +781,108 @@ _show_version() {
   echo "$SCRIPT_NAME v$VERSION"
 }
 
+# --- Distributed NESTED_LOA (Phase 10) Functions ---
+
+# Send warrant to remote agent over network
+# Usage: _send_warrant_remote <warrant_file> <remote_host> <remote_port>
+# Returns: JSON with transmission status
+_send_warrant_remote() {
+  local warrant_file="$1"
+  local remote_host="${2:-}"
+  local remote_port="${3:-9231}"
+
+  if [[ ! -f "$warrant_file" ]]; then
+    _error "Warrant file not found: $warrant_file"
+  fi
+
+  [[ -n "$remote_host" ]] || _error "_send_warrant_remote requires remote_host"
+
+  # Read warrant JSON
+  local warrant_json
+  warrant_json=$(cat "$warrant_file")
+
+  # Extract warranty_id for logging
+  local warrant_id
+  warrant_id=$(echo "$warrant_json" | grep -o '"warrant_id": "[^"]*"' | cut -d'"' -f4)
+
+  _log "Sending warrant $warrant_id to $remote_host:$remote_port..."
+
+  # Send warrant with retry logic
+  local max_retries=3
+  local retry_count=0
+  local response=""
+  local http_code=""
+
+  while (( retry_count < max_retries )); do
+    # Use curl to POST warrant
+    response=$(curl -s -w "\n%{http_code}" \
+      -X POST "http://$remote_host:$remote_port/warrant" \
+      -H "Content-Type: application/json" \
+      -d "$warrant_json" \
+      --max-time 30 \
+      2>/dev/null) || true
+
+    # Extract HTTP code (last line)
+    http_code=$(echo "$response" | tail -1)
+    # Extract body (all but last line)
+    response=$(echo "$response" | head -n-1)
+
+    if [[ "$http_code" == "200" || "$http_code" == "201" ]]; then
+      _log "Warrant transmitted successfully (HTTP $http_code)"
+
+      # Log successful transmission
+      _audit_log "warrant-transmit" "$warrant_id" "TRANSMITTED" "2" "6" "Sent to $remote_host:$remote_port" "" "$warrant_id"
+
+      # Return transmission result
+      python3 << PYJSON
+import json
+from datetime import datetime, timezone
+
+result = {
+    "type": "warrant-transmission",
+    "warrant_id": "$warrant_id",
+    "status": "TRANSMITTED",
+    "remote_endpoint": "$remote_host:$remote_port",
+    "http_code": $http_code,
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+}
+
+print(json.dumps(result))
+PYJSON
+      return 0
+    fi
+
+    ((retry_count++))
+    if (( retry_count < max_retries )); then
+      local backoff=$((2 ** retry_count))  # Exponential backoff: 2s, 4s, 8s
+      _log "Transmission failed (HTTP $http_code), retrying in ${backoff}s... (attempt $((retry_count + 1))/$max_retries)"
+      sleep "$backoff"
+    fi
+  done
+
+  # All retries exhausted
+  _log "ERROR: Warrant transmission failed after $max_retries attempts"
+  _audit_log "warrant-transmit" "$warrant_id" "FAILED" "2" "6" "Failed to send to $remote_host:$remote_port after $max_retries attempts" "" "$warrant_id"
+
+  python3 << PYJSON
+import json
+from datetime import datetime, timezone
+
+result = {
+    "type": "warrant-transmission",
+    "warrant_id": "$warrant_id",
+    "status": "FAILED",
+    "remote_endpoint": "$remote_host:$remote_port",
+    "reason": "Failed after 3 retries (last HTTP code: $http_code)",
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+}
+
+print(json.dumps(result))
+PYJSON
+
+  return 1
+}
+
 # --- NESTED_LOA Warrant Functions ---
 
 # Validate a warrant from a parent agent
@@ -1272,6 +1374,115 @@ main() {
       esac
 
       _report_progress "$warrant_id" "$decisions_made" "$decisions_approved" "$decisions_rejected" "$status"
+      ;;
+
+    --delegate-remote)
+      # Phase 10: Delegate task to remote agent over network
+      # Usage: qlaude --delegate-remote <task> --to <host:port> --with-loa <level>
+      local task="${2:-}"
+      local remote_endpoint=""
+      local proposed_loa=4
+      local trust_score=0.5
+      local time_limit=3600
+
+      [[ -n "$task" ]] || _error "--delegate-remote requires task description"
+
+      # Parse arguments
+      shift 2
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --to)
+            remote_endpoint="${2:-}"
+            [[ -n "$remote_endpoint" ]] || _error "--to requires host:port"
+            shift 2
+            ;;
+          --with-loa)
+            proposed_loa="${2:-}"
+            shift 2
+            ;;
+          --trust)
+            trust_score="${2:-}"
+            shift 2
+            ;;
+          --time-limit)
+            time_limit="${2:-}"
+            shift 2
+            ;;
+          *)
+            _error "Unknown argument in --delegate-remote: $1"
+            ;;
+        esac
+      done
+
+      [[ -n "$remote_endpoint" ]] || _error "--delegate-remote requires --to <host:port>"
+
+      # Parse host and port
+      local remote_host="${remote_endpoint%:*}"
+      local remote_port="${remote_endpoint#*:}"
+      [[ -n "$remote_host" ]] || _error "Invalid host:port format: $remote_endpoint"
+      [[ -n "$remote_port" ]] || remote_port=9231
+
+      # Check authority
+      local qc_level
+      local loa_cap
+      qc_level=$(_get_qc_level)
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+
+      if (( qc_level < 2 )); then
+        _audit_log "warrant-transmit" "unknown" "REJECTED" "$qc_level" "$loa_cap" "Remote delegation requires QC2_FULLY_AUTONOMOUS"
+        _error "Remote delegation requires QC_LEVEL=2 (FULLY_AUTONOMOUS), but current is QC$qc_level"
+      fi
+
+      # Create local warrant first
+      local child_uuid="unknown-remote"  # Will be updated when child responds
+      local warrant_output
+      warrant_output=$(_create_warrant "$child_uuid" "$task" "$proposed_loa" "$trust_score" "$time_limit" 2>&1)
+
+      local warrant_id
+      warrant_id=$(echo "$warrant_output" | grep -o '"warrant_id": "[^"]*"' | tail -1 | cut -d'"' -f4)
+
+      if [[ -z "$warrant_id" ]]; then
+        _error "Failed to create local warrant before transmission"
+      fi
+
+      local warrant_file="$AURORA_AGENT_DIR/warrants/$warrant_id.json"
+
+      # Send warrant to remote agent
+      _log "Transmitting warrant to remote agent at $remote_endpoint..."
+      _send_warrant_remote "$warrant_file" "$remote_host" "$remote_port"
+      ;;
+
+    --send-warrant)
+      # Phase 10: Send an existing warrant file to remote agent
+      # Usage: qlaude --send-warrant <warrant_file> --to <host:port>
+      local warrant_file="${2:-}"
+      local remote_endpoint=""
+
+      [[ -n "$warrant_file" ]] || _error "--send-warrant requires warrant file path"
+      [[ -f "$warrant_file" ]] || _error "Warrant file not found: $warrant_file"
+
+      # Parse arguments
+      shift 2
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --to)
+            remote_endpoint="${2:-}"
+            [[ -n "$remote_endpoint" ]] || _error "--to requires host:port"
+            shift 2
+            ;;
+          *)
+            _error "Unknown argument in --send-warrant: $1"
+            ;;
+        esac
+      done
+
+      [[ -n "$remote_endpoint" ]] || _error "--send-warrant requires --to <host:port>"
+
+      local remote_host="${remote_endpoint%:*}"
+      local remote_port="${remote_endpoint#*:}"
+      [[ -n "$remote_port" ]] || remote_port=9231
+
+      _send_warrant_remote "$warrant_file" "$remote_host" "$remote_port"
       ;;
 
     "")
