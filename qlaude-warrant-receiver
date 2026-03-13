@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# Phase 10 Unit 2: Warrant Receiver
+# HTTP server for receiving warrant POST requests from remote agents
+#
+# Usage:
+#   qlaude-warrant-receiver [--port 9231] [--host 127.0.0.1] [--daemon]
+
+import http.server
+import socketserver
+import json
+import os
+import sys
+import argparse
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[qlaude-warrant-receiver] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
+WARRANT_DIR = Path.home() / '.aurora-agent' / 'warrants'
+AUDIT_LOG = Path.home() / '.aurora-agent' / '.qlaude-audit.jsonl'
+
+# Ensure directories exist
+WARRANT_DIR.mkdir(parents=True, exist_ok=True)
+AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+
+class WarrantHandler(http.server.BaseHTTPRequestHandler):
+    """HTTP request handler for warrant reception"""
+    
+    def log_message(self, format, *args):
+        """Override to use our logger"""
+        logger.info(format % args)
+    
+    def do_POST(self):
+        """Handle POST requests for warrant submission"""
+        
+        if self.path != '/warrant':
+            self.send_error(404, 'Endpoint not found')
+            return
+        
+        try:
+            # Read content length
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_error(400, 'Missing Content-Length')
+                return
+            
+            # Read warranty JSON
+            body = self.rfile.read(content_length).decode('utf-8')
+            
+            # Validate JSON
+            try:
+                warrant_data = json.loads(body)
+            except json.JSONDecodeError as e:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Invalid JSON'}).encode())
+                return
+            
+            # Extract warranty_id
+            warrant_id = warrant_data.get('warrant_id')
+            if not warrant_id:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Missing warrant_id'}).encode())
+                return
+            
+            # Check if warranty already exists
+            warrant_file = WARRANT_DIR / f'{warrant_id}.json'
+            if warrant_file.exists():
+                self.send_response(409)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': f'Warranty {warrant_id} already exists'}).encode())
+                return
+            
+            # Write warranty to file
+            try:
+                with open(warrant_file, 'w') as f:
+                    json.dump(warrant_data, f, indent=2)
+            except IOError as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Failed to write warranty file'}).encode())
+                return
+            
+            logger.info(f'Received warranty: {warrant_id}')
+            
+            # Log to audit trail
+            audit_entry = {
+                'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                'action': 'warrant-received',
+                'target': warrant_id,
+                'decision': 'RECEIVED',
+                'qc_level': '2',
+                'loa_cap': 2,
+                'reason': 'Received from network'
+            }
+            
+            with open(AUDIT_LOG, 'a') as f:
+                f.write(json.dumps(audit_entry) + '\n')
+            
+            # Return success response
+            self.send_response(201)
+            self.send_header('Content-Type', 'application/json')
+            response = {
+                'status': 'RECEIVED',
+                'warrant_id': warrant_id,
+                'local_path': str(warrant_file)
+            }
+            response_json = json.dumps(response).encode()
+            self.send_header('Content-Length', len(response_json))
+            self.end_headers()
+            self.wfile.write(response_json)
+            
+        except Exception as e:
+            logger.error(f'Error handling POST: {e}')
+            self.send_error(500, 'Internal server error')
+    
+    def do_GET(self):
+        """Handle GET requests for health check"""
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'status': 'ok'}).encode())
+        else:
+            self.send_error(404, 'Not found')
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Warrant Receiver Server')
+    parser.add_argument('--port', type=int, default=9231, help='Port to listen on (default: 9231)')
+    parser.add_argument('--host', default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    parser.add_argument('--daemon', action='store_true', help='Run as daemon')
+    
+    args = parser.parse_args()
+    
+    # Validate port
+    if args.port < 1024 or args.port > 65535:
+        logger.error(f'Invalid port: {args.port} (must be 1024-65535)')
+        sys.exit(1)
+    
+    logger.info(f'Starting warrant receiver on {args.host}:{args.port}')
+    
+    try:
+        with socketserver.TCPServer((args.host, args.port), WarrantHandler) as httpd:
+            logger.info(f'Server listening on {args.host}:{args.port}')
+            httpd.serve_forever()
+    except OSError as e:
+        logger.error(f'Failed to start server: {e}')
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info('Server stopped')
+        sys.exit(0)
+
+
+if __name__ == '__main__':
+    main()
