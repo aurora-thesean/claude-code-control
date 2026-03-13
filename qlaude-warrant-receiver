@@ -12,8 +12,12 @@ import os
 import sys
 import argparse
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import base64
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
 
 # Setup logging
 logging.basicConfig(
@@ -30,6 +34,86 @@ AUDIT_LOG = Path.home() / '.aurora-agent' / '.qlaude-audit.jsonl'
 # Ensure directories exist
 WARRANT_DIR.mkdir(parents=True, exist_ok=True)
 AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+
+def verify_warrant_signature(warrant_data):
+    """
+    Verify RSA-SHA256 signature on warrant.
+    Returns: (is_valid, error_message)
+    """
+    try:
+        # Check for signature
+        if 'signature' not in warrant_data:
+            return False, 'No signature in warrant'
+
+        # Check algorithm
+        algo = warrant_data.get('signature_algorithm', 'unknown')
+        if algo != 'RSA-SHA256':
+            return False, f'Unsupported signature algorithm: {algo}'
+
+        # Check expiration
+        expires_at_str = warrant_data.get('expires_at')
+        if expires_at_str:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_str)
+                if datetime.now(timezone.utc) > expires_at:
+                    return False, f'Warrant expired at {expires_at_str}'
+            except Exception as e:
+                return False, f'Invalid expiration timestamp: {e}'
+
+        # Load parent's public key
+        parent_uuid = warrant_data.get('parent_uuid', 'unknown')
+        parent_pubkey_path = WARRANT_DIR.parent / f'parent-{parent_uuid}.pem'
+
+        # Fallback: try generic parent-public-key.pem
+        if not parent_pubkey_path.exists():
+            parent_pubkey_path = WARRANT_DIR.parent / 'parent-public-key.pem'
+
+        if not parent_pubkey_path.exists():
+            return False, f'Parent public key not found (tried {parent_pubkey_path})'
+
+        # Load public key
+        try:
+            with open(parent_pubkey_path, 'rb') as f:
+                public_key = serialization.load_pem_public_key(
+                    f.read(),
+                    backend=default_backend()
+                )
+        except Exception as e:
+            return False, f'Failed to load public key: {e}'
+
+        # Extract and decode signature
+        try:
+            signature_b64 = warrant_data.get('signature')
+            signature = base64.b64decode(signature_b64)
+        except Exception as e:
+            return False, f'Invalid base64 signature: {e}'
+
+        # Create canonical JSON for verification
+        canonical_json = json.dumps(
+            {k: warrant_data[k] for k in sorted(warrant_data.keys())
+             if k not in ['signature', 'signature_algorithm']},
+            separators=(',', ':'),
+            sort_keys=True
+        )
+
+        # Verify signature
+        try:
+            public_key.verify(
+                signature,
+                canonical_json.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            return True, 'Signature valid'
+        except Exception as e:
+            return False, f'Signature verification failed: {e}'
+
+    except Exception as e:
+        return False, f'Verification error: {e}'
 
 
 class WarrantHandler(http.server.BaseHTTPRequestHandler):
@@ -74,7 +158,22 @@ class WarrantHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'error': 'Missing warrant_id'}).encode())
                 return
-            
+
+            # PHASE 10b.1: Verify signature (optional, but recommended)
+            # If signature is present, verify it
+            if 'signature' in warrant_data:
+                is_valid, error_msg = verify_warrant_signature(warrant_data)
+                if not is_valid:
+                    self.send_response(401)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'error': f'Signature verification failed: {error_msg}'}).encode())
+                    logger.warning(f'Warrant {warrant_id} rejected: {error_msg}')
+                    return
+                logger.info(f'Warrant {warrant_id} signature verified')
+            else:
+                logger.warning(f'Warrant {warrant_id} has no signature (Phase 10a compatibility)')
+
             # Check if warranty already exists
             warrant_file = WARRANT_DIR / f'{warrant_id}.json'
             if warrant_file.exists():
@@ -105,7 +204,8 @@ class WarrantHandler(http.server.BaseHTTPRequestHandler):
                 'decision': 'RECEIVED',
                 'qc_level': '2',
                 'loa_cap': 2,
-                'reason': 'Received from network'
+                'reason': 'Received from network',
+                'signature_verified': 'signature' in warrant_data
             }
             
             with open(AUDIT_LOG, 'a') as f:
