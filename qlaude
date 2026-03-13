@@ -867,6 +867,51 @@ print(json.dumps({
 PYJSON
 }
 
+# Record a progress update during warrant execution
+# Usage: _report_progress <warrant_id> <decisions_made> <decisions_approved> <decisions_rejected> [status]
+_report_progress() {
+  local warrant_id="$1"
+  local decisions_made="${2:-0}"
+  local decisions_approved="${3:-0}"
+  local decisions_rejected="${4:-0}"
+  local status="${5:-IN_PROGRESS}"
+
+  _ensure_aurora_agent_dir
+
+  local reports_dir="$WARRANTS_DIR/progress"
+  mkdir -p "$reports_dir"
+
+  local report_file="$reports_dir/${warrant_id}_$(date +%s).jsonl"
+
+  python3 << PYJSON > "$report_file"
+import json
+from datetime import datetime, timezone
+
+report = {
+    "type": "task_progress",
+    "warrant_id": "$warrant_id",
+    "child_uuid": "$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo 'unknown')",
+    "decisions_made": $decisions_made,
+    "decisions_approved": $decisions_approved,
+    "decisions_rejected": $decisions_rejected,
+    "approval_rate": round(100.0 * $decisions_approved / max(1, $decisions_made), 1),
+    "status": "$status",
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+}
+
+print(json.dumps(report))
+PYJSON
+
+  _log "Progress report recorded for warrant $warrant_id (decisions_made=$decisions_made, approved=$decisions_approved, rejected=$decisions_rejected)"
+
+  # Log to audit trail
+  local reason="Task progress: $decisions_made decisions, $decisions_approved approved, $decisions_rejected rejected"
+  _audit_log "task-progress" "$warrant_id" "$status" "2" "2" "$reason" "" "$warrant_id"
+
+  # Output report details
+  cat "$report_file"
+}
+
 # Child-side: Accept a warrant from parent
 # Usage: _accept_warrant <warrant_file> [--accept | --counter-propose <loa>]
 # Returns: JSON acceptance record
@@ -1203,6 +1248,30 @@ main() {
       else
         _accept_warrant "$warrant_file" "${action:---accept}"
       fi
+      ;;
+
+    --report-progress)
+      # NESTED_LOA: Child reports progress on warrant execution
+      # Usage: qlaude --report-progress <warrant_id> <decisions_made> <decisions_approved> <decisions_rejected> [status]
+      local warrant_id="${2:-}"
+      local decisions_made="${3:-0}"
+      local decisions_approved="${4:-0}"
+      local decisions_rejected="${5:-0}"
+      local status="${6:-IN_PROGRESS}"
+
+      [[ -n "$warrant_id" ]] || _error "--report-progress requires a warrant_id"
+      [[ "$warrant_id" =~ ^[a-f0-9-]{36}$ ]] || _error "Invalid warrant_id format: $warrant_id"
+
+      # Validate status
+      case "$status" in
+        IN_PROGRESS|PAUSED|COMPLETED|FAILED)
+          ;;
+        *)
+          _error "Invalid status: $status (must be IN_PROGRESS, PAUSED, COMPLETED, or FAILED)"
+          ;;
+      esac
+
+      _report_progress "$warrant_id" "$decisions_made" "$decisions_approved" "$decisions_rejected" "$status"
       ;;
 
     "")
