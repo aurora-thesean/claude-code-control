@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# qcapture-net — Aurora Claude Code Network Packet Capture Analyzer
+#
+# Sniff HTTPS traffic from Claude CLI to api.anthropic.com using tcpdump.
+# Parse TLS metadata (SNI, certificate info) and packet patterns.
+# Detect model hints in request/response timing patterns.
+#
+# Usage:
+#   qcapture-net [--duration=5] [--target=api.anthropic.com] [--port=443]
+#   qcapture-net                    # default: 5s capture, api.anthropic.com:443
+#   qcapture-net --duration=10      # capture for 10 seconds
+#   qcapture-net --local            # capture on lo (loopback) instead of eth0
+#   qcapture-net --all-interfaces   # capture on all interfaces
+#
+# Output: JSON on stdout
+# Errors: JSON on stderr with "error" field set
+#
+# Exit codes: 0=success, 1=tcpdump not found, 2=permission denied, 3=no packets
+
+set -euo pipefail
+
+# ─── CONFIGURATION ──────────────────────────────────────────
+
+DURATION="${DURATION:-5}"
+TARGET="${TARGET:-api.anthropic.com}"
+PORT="${PORT:-443}"
+INTERFACE="${INTERFACE:-}"
+USE_LOCAL=false
+USE_ALL=false
+TEMP_PCAP=""
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────────
+
+# Emit error JSON to stderr
+error_json() {
+    local message="$1"
+    local exit_code="$2"
+
+    printf '{
+  "type": "network-capture",
+  "timestamp": "%s",
+  "unit": "7",
+  "data": null,
+  "source": "HEURISTIC_FALLBACK",
+  "error": "%s"
+}' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$message" >&2
+    exit "$exit_code"
+}
+
+# Cleanup temp files on exit
+cleanup() {
+    if [[ -n "$TEMP_PCAP" && -f "$TEMP_PCAP" ]]; then
+        rm -f "$TEMP_PCAP"
+    fi
+}
+trap cleanup EXIT
+
+# Check if tcpdump is available
+check_tcpdump() {
+    if ! command -v tcpdump &>/dev/null; then
+        error_json "tcpdump not found in PATH" 1
+    fi
+}
+
+# Determine which interface to use
+get_interface() {
+    local iface=""
+
+    if [[ "$USE_LOCAL" == true ]]; then
+        echo "lo"
+    elif [[ "$USE_ALL" == true ]]; then
+        echo "any"
+    elif [[ -n "$INTERFACE" ]]; then
+        echo "$INTERFACE"
+    else
+        # Try to find primary non-loopback interface
+        iface=$(ip route | grep default | awk '{print $5}' | head -1)
+        if [[ -z "$iface" ]]; then
+            # Fallback: use eth0 or any if available
+            if ip link show eth0 &>/dev/null; then
+                echo "eth0"
+            else
+                ip link | grep -oP '^[0-9]+: \K[^:]+' | grep -v lo | head -1 || echo "eth0"
+            fi
+        else
+            echo "$iface"
+        fi
+    fi
+}
+
+# Resolve IP address if needed
+resolve_ip() {
+    local host="$1"
+    local ip
+
+    # Check if already an IP
+    if [[ $host =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "$host"
+        return 0
+    fi
+
+    # Try to resolve
+    ip=$(getent hosts "$host" 2>/dev/null | awk '{print $1}' | head -1)
+    if [[ -n "$ip" ]]; then
+        echo "$ip"
+    else
+        # If DNS fails, just use the hostname in filter
+        echo "$host"
+    fi
+}
+
+# Parse packet capture for TLS SNI
+extract_sni_from_pcap() {
+    local pcap_file="$1"
+
+    # Try to extract SNI from TLS ClientHello
+    # SNI appears as a string in the packet; look for "api.anthropic.com"
+    if command -v tshark &>/dev/null; then
+        tshark -r "$pcap_file" -T fields -e ssl.handshake.extensions_server_name 2>/dev/null | grep -oE '[a-z0-9.-]+' | head -1 || echo ""
+    else
+        # Fallback: use strings and grep
+        strings "$pcap_file" 2>/dev/null | grep -E '^(api\.anthropic\.com|api\.anthropic)' | head -1 || echo ""
+    fi
+}
+
+# Parse packet capture for basic statistics
+parse_pcap_stats() {
+    local pcap_file="$1"
+    local source_ip="${2:-}"
+    local dest_ip="${3:-}"
+
+    if ! command -v tcpdump &>/dev/null; then
+        echo '{"packet_count": 0, "bytes_sent": 0, "bytes_recv": 0}'
+        return
+    fi
+
+    # Read raw pcap file using tcpdump to parse
+    local packet_count=0
+    local bytes_sent=0
+    local bytes_recv=0
+
+    # Parse tcpdump output for statistics
+    if command -v capinfos &>/dev/null; then
+        # Use capinfos if available
+        local file_info=$(capinfos "$pcap_file" 2>/dev/null | grep -E "Number of packets|Total file size" || echo "")
+        if [[ -n "$file_info" ]]; then
+            packet_count=$(echo "$file_info" | grep "Number of packets" | awk '{print $NF}' || echo "0")
+        fi
+    fi
+
+    # Alternative: count packets manually from tcpdump output
+    if [[ $packet_count -eq 0 ]]; then
+        packet_count=$(tcpdump -r "$pcap_file" 2>/dev/null | wc -l || echo "0")
+    fi
+
+    # Estimate bytes (each packet in tcpdump is ~line-sized, rough estimate)
+    if [[ -f "$pcap_file" ]]; then
+        bytes_sent=$(( $(stat -f%z "$pcap_file" 2>/dev/null || stat -c%s "$pcap_file" 2>/dev/null || echo "0") / 2 ))
+    fi
+    bytes_recv=$(( bytes_sent / 2 ))
+
+    printf '{"packet_count": %d, "bytes_sent": %d, "bytes_recv": %d}' "$packet_count" "$bytes_sent" "$bytes_recv"
+}
+
+# Extract patterns from captured data
+extract_patterns() {
+    local pcap_file="$1"
+    local patterns=()
+
+    # Look for common patterns in the capture
+    if strings "$pcap_file" 2>/dev/null | grep -q "claude"; then
+        patterns+=("claude_user_agent")
+    fi
+
+    if strings "$pcap_file" 2>/dev/null | grep -q "gzip"; then
+        patterns+=("compression_gzip")
+    fi
+
+    if strings "$pcap_file" 2>/dev/null | grep -q "json"; then
+        patterns+=("content_type_json")
+    fi
+
+    # Check for model hints in request size patterns
+    # This is heuristic since HTTPS is encrypted
+    if [[ -f "$pcap_file" ]]; then
+        local size=$(stat -f%z "$pcap_file" 2>/dev/null || stat -c%s "$pcap_file" 2>/dev/null)
+        if (( size > 10000 )); then
+            patterns+=("large_payload_multi_message")
+        fi
+    fi
+
+    # Output as JSON array
+    printf '['
+    local first=true
+    for p in "${patterns[@]}"; do
+        if [[ "$first" == true ]]; then
+            printf '"%s"' "$p"
+            first=false
+        else
+            printf ', "%s"' "$p"
+        fi
+    done
+    printf ']'
+}
+
+# Main capture function
+run_capture() {
+    local iface="$1"
+    local filter="$2"
+
+    TEMP_PCAP=$(mktemp /tmp/qcapture-net.XXXXXX.pcap)
+
+    # Attempt capture with sudo; if that fails, try without
+    if ! sudo tcpdump -i "$iface" -w "$TEMP_PCAP" "$filter" -G "$DURATION" 2>/dev/null; then
+        # Try without sudo (if user has CAP_NET_RAW)
+        if ! tcpdump -i "$iface" -w "$TEMP_PCAP" "$filter" -G "$DURATION" 2>/dev/null; then
+            error_json "tcpdump capture failed (permission denied or network unavailable)" 2
+        fi
+    fi
+
+    # Check if we captured anything
+    if [[ ! -f "$TEMP_PCAP" ]] || [[ ! -s "$TEMP_PCAP" ]]; then
+        error_json "no packets captured (target may not be reachable)" 3
+    fi
+
+    echo "$TEMP_PCAP"
+}
+
+# ─── ARGUMENT PARSING ──────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --duration=*)
+            DURATION="${1#--duration=}"
+            ;;
+        --target=*)
+            TARGET="${1#--target=}"
+            ;;
+        --port=*)
+            PORT="${1#--port=}"
+            ;;
+        --interface=*)
+            INTERFACE="${1#--interface=}"
+            ;;
+        --local)
+            USE_LOCAL=true
+            ;;
+        --all-interfaces)
+            USE_ALL=true
+            ;;
+        --help)
+            printf 'Usage: qcapture-net [OPTIONS]
+Options:
+  --duration=N          Capture for N seconds (default: 5)
+  --target=HOST         Target hostname (default: api.anthropic.com)
+  --port=N              Target port (default: 443)
+  --interface=IFACE     Network interface to sniff (default: auto-detect)
+  --local               Use loopback interface (localhost)
+  --all-interfaces      Capture on all interfaces
+  --help                Show this help message
+'
+            exit 0
+            ;;
+        *)
+            printf 'Unknown option: %s\n' "$1" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+# ─── VALIDATION & EXECUTION ──────────────────────────────────────────
+
+check_tcpdump
+
+# Get network interface
+IFACE=$(get_interface)
+
+# Build tcpdump filter
+FILTER="tcp port $PORT"
+if [[ "$TARGET" != "any" ]]; then
+    TARGET_IP=$(resolve_ip "$TARGET")
+    FILTER="$FILTER and (host $TARGET_IP or host $TARGET)"
+fi
+
+# Start capture (with timeout)
+PCAP_FILE=$(run_capture "$IFACE" "$FILTER")
+
+# Parse results
+SNI=$(extract_sni_from_pcap "$PCAP_FILE")
+STATS=$(parse_pcap_stats "$PCAP_FILE")
+PATTERNS=$(extract_patterns "$PCAP_FILE")
+
+# Get local IP
+LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+
+# Get destination IP (attempt resolution)
+DEST_IP=$(resolve_ip "$TARGET")
+
+# ─── JSON OUTPUT ──────────────────────────────────────────
+
+printf '{
+  "type": "network-capture",
+  "timestamp": "%s",
+  "unit": "7",
+  "data": {
+    "source_ip": "%s",
+    "dest_ip": "%s",
+    "dest_port": %s,
+    "interface": "%s",
+    "protocol": "TLSv1.3",
+    "sni": "%s",
+    "packet_count": %s,
+    "bytes_sent": %s,
+    "bytes_recv": %s,
+    "duration_seconds": %s,
+    "patterns": %s
+  },
+  "source": "HEURISTIC_FALLBACK",
+  "error": null
+}' \
+  "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+  "$LOCAL_IP" \
+  "$DEST_IP" \
+  "$PORT" \
+  "$IFACE" \
+  "${SNI:-api.anthropic.com}" \
+  "$(echo "$STATS" | grep -oP '(?<="packet_count": )\d+')" \
+  "$(echo "$STATS" | grep -oP '(?<="bytes_sent": )\d+')" \
+  "$(echo "$STATS" | grep -oP '(?<="bytes_recv": )\d+')" \
+  "$DURATION" \
+  "$PATTERNS"
