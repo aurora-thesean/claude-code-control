@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+# Phase 10b Unit 1: Warrant Signing Infrastructure
+# RSA-2048 signature generation and verification for warrants
+#
+# Usage:
+#   qwarrant-sign --sign <warrant.json> --key <private.pem>
+#   qwarrant-sign --verify <warrant.json> --key <public.pem>
+#   qwarrant-sign --generate-keys [--output-dir ~/.aurora-agent]
+#   qwarrant-sign --info <warrant.json>
+
+import json
+import argparse
+import sys
+import logging
+import os
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.backends import default_backend
+import base64
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[qwarrant-sign] %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
+DEFAULT_KEY_SIZE = 2048
+DEFAULT_WARRANT_TTL = 3600  # 1 hour
+
+
+def generate_rsa_keypair(key_size=DEFAULT_KEY_SIZE, output_dir=None):
+    """Generate RSA-2048 key pair and save to files"""
+    if output_dir is None:
+        output_dir = Path.home() / '.aurora-agent'
+    else:
+        output_dir = Path(output_dir)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    private_key_path = output_dir / 'private.pem'
+    public_key_path = output_dir / 'public.pem'
+
+    # Generate private key
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=key_size,
+        backend=default_backend()
+    )
+
+    # Save private key
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+
+    with open(private_key_path, 'wb') as f:
+        f.write(private_pem)
+
+    os.chmod(private_key_path, 0o600)  # Private key readable only by owner
+
+    # Save public key
+    public_key = private_key.public_key()
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    with open(public_key_path, 'wb') as f:
+        f.write(public_pem)
+
+    logger.info(f'Generated RSA-{key_size} keypair')
+    logger.info(f'Private key: {private_key_path} (mode 600)')
+    logger.info(f'Public key: {public_key_path}')
+
+    return private_key_path, public_key_path
+
+
+def load_private_key(key_path):
+    """Load private key from PEM file"""
+    try:
+        with open(key_path, 'rb') as f:
+            key_data = f.read()
+
+        private_key = serialization.load_pem_private_key(
+            key_data,
+            password=None,
+            backend=default_backend()
+        )
+
+        return private_key
+    except Exception as e:
+        logger.error(f'Error loading private key: {e}')
+        return None
+
+
+def load_public_key(key_path):
+    """Load public key from PEM file"""
+    try:
+        with open(key_path, 'rb') as f:
+            key_data = f.read()
+
+        public_key = serialization.load_pem_public_key(
+            key_data,
+            backend=default_backend()
+        )
+
+        return public_key
+    except Exception as e:
+        logger.error(f'Error loading public key: {e}')
+        return None
+
+
+def sign_warrant(warrant_dict, private_key_path, ttl_seconds=DEFAULT_WARRANT_TTL):
+    """Sign a warrant with private key, add signature and timestamp"""
+    try:
+        # Load private key
+        private_key = load_private_key(private_key_path)
+        if not private_key:
+            return None
+
+        # Add timestamp
+        now = datetime.now(timezone.utc)
+        warrant_dict['timestamp'] = now.isoformat()
+        warrant_dict['expires_at'] = (now + timedelta(seconds=ttl_seconds)).isoformat()
+
+        # Create canonical JSON for signing (deterministic order)
+        canonical_json = json.dumps(
+            {k: warrant_dict[k] for k in sorted(warrant_dict.keys())
+             if k not in ['signature', 'signature_algorithm', '_signature_debug']},
+            separators=(',', ':'),
+            sort_keys=True
+        )
+
+        # Sign the canonical JSON
+        signature = private_key.sign(
+            canonical_json.encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+
+        # Add signature to warrant
+        warrant_dict['signature'] = base64.b64encode(signature).decode('utf-8')
+        warrant_dict['signature_algorithm'] = 'RSA-SHA256'
+
+        logger.info(f'Signed warrant {warrant_dict.get("warrant_id", "unknown")} ' +
+                   f'(expires in {ttl_seconds}s)')
+
+        return warrant_dict
+
+    except Exception as e:
+        logger.error(f'Error signing warrant: {e}')
+        return None
+
+
+def verify_warrant_signature(warrant_dict, public_key_path):
+    """Verify warrant signature with public key"""
+    try:
+        # Load public key
+        public_key = load_public_key(public_key_path)
+        if not public_key:
+            return False, 'Could not load public key'
+
+        # Extract signature
+        signature_b64 = warrant_dict.get('signature')
+        if not signature_b64:
+            return False, 'No signature in warrant'
+
+        try:
+            signature = base64.b64decode(signature_b64)
+        except Exception as e:
+            return False, f'Invalid base64 signature: {e}'
+
+        # Check algorithm
+        algo = warrant_dict.get('signature_algorithm', 'unknown')
+        if algo != 'RSA-SHA256':
+            return False, f'Unsupported signature algorithm: {algo}'
+
+        # Check expiration
+        expires_at_str = warrant_dict.get('expires_at')
+        if expires_at_str:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_str)
+                if datetime.now(timezone.utc) > expires_at:
+                    return False, f'Warrant expired at {expires_at_str}'
+            except Exception as e:
+                return False, f'Invalid expiration timestamp: {e}'
+
+        # Create canonical JSON for verification
+        canonical_json = json.dumps(
+            {k: warrant_dict[k] for k in sorted(warrant_dict.keys())
+             if k not in ['signature', 'signature_algorithm', '_signature_debug']},
+            separators=(',', ':'),
+            sort_keys=True
+        )
+
+        # Verify signature
+        try:
+            public_key.verify(
+                signature,
+                canonical_json.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+
+            logger.info(f'Verified warrant {warrant_dict.get("warrant_id", "unknown")}')
+            return True, 'Signature valid'
+
+        except Exception as e:
+            return False, f'Signature verification failed: {e}'
+
+    except Exception as e:
+        logger.error(f'Error verifying warrant: {e}')
+        return False, f'Verification error: {e}'
+
+
+def warrant_info(warrant_dict):
+    """Display information about a warrant"""
+    print(f"Warrant ID:       {warrant_dict.get('warrant_id', 'unknown')}")
+    print(f"Parent UUID:      {warrant_dict.get('parent_uuid', 'unknown')}")
+    print(f"Child UUID:       {warrant_dict.get('child_uuid', 'unknown')}")
+    print(f"Proposed LOA:     {warrant_dict.get('proposed_loa_cap', 'unknown')}")
+    print(f"Timestamp:        {warrant_dict.get('timestamp', 'not set')}")
+    print(f"Expires At:       {warrant_dict.get('expires_at', 'not set')}")
+    print(f"Signature Algo:   {warrant_dict.get('signature_algorithm', 'none')}")
+    print(f"Signature Len:    {len(warrant_dict.get('signature', ''))} chars")
+
+    # Check expiration
+    expires_at_str = warrant_dict.get('expires_at')
+    if expires_at_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            now = datetime.now(timezone.utc)
+            if now > expires_at:
+                print(f"Status:           ✗ EXPIRED")
+            else:
+                remaining = expires_at - now
+                print(f"Status:           ✓ Valid ({remaining.total_seconds():.0f}s remaining)")
+        except Exception as e:
+            print(f"Status:           ? Unknown ({e})")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Warrant signing and verification for distributed NESTED_LOA'
+    )
+
+    parser.add_argument('--sign', help='Sign warrant from JSON file')
+    parser.add_argument('--verify', help='Verify warrant signature from JSON file')
+    parser.add_argument('--info', help='Display warrant information')
+    parser.add_argument('--key', help='Path to private (signing) or public (verifying) key')
+    parser.add_argument('--generate-keys', action='store_true', help='Generate RSA keypair')
+    parser.add_argument('--output-dir', default=str(Path.home() / '.aurora-agent'),
+                       help='Output directory for generated keys')
+    parser.add_argument('--ttl', type=int, default=DEFAULT_WARRANT_TTL,
+                       help='Warrant TTL in seconds')
+
+    args = parser.parse_args()
+
+    if args.generate_keys:
+        private_path, public_path = generate_rsa_keypair(
+            output_dir=args.output_dir
+        )
+        output = {
+            'status': 'keys_generated',
+            'private_key': str(private_path),
+            'public_key': str(public_path)
+        }
+        print(json.dumps(output))
+        return
+
+    if args.sign:
+        if not args.key:
+            logger.error('--key required for signing')
+            sys.exit(1)
+
+        try:
+            with open(args.sign, 'r') as f:
+                warrant = json.load(f)
+        except Exception as e:
+            logger.error(f'Error reading warrant: {e}')
+            sys.exit(1)
+
+        signed = sign_warrant(warrant, args.key, args.ttl)
+        if signed:
+            print(json.dumps(signed, indent=2))
+            sys.exit(0)
+        else:
+            sys.exit(1)
+
+    if args.verify:
+        if not args.key:
+            logger.error('--key required for verification')
+            sys.exit(1)
+
+        try:
+            with open(args.verify, 'r') as f:
+                warrant = json.load(f)
+        except Exception as e:
+            logger.error(f'Error reading warrant: {e}')
+            sys.exit(1)
+
+        valid, reason = verify_warrant_signature(warrant, args.key)
+        output = {
+            'status': 'valid' if valid else 'invalid',
+            'reason': reason,
+            'warrant_id': warrant.get('warrant_id')
+        }
+        print(json.dumps(output))
+        sys.exit(0 if valid else 1)
+
+    if args.info:
+        try:
+            with open(args.info, 'r') as f:
+                warrant = json.load(f)
+        except Exception as e:
+            logger.error(f'Error reading warrant: {e}')
+            sys.exit(1)
+
+        warrant_info(warrant)
+        return
+
+    parser.print_help()
+
+
+if __name__ == '__main__':
+    main()
