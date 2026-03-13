@@ -1,0 +1,187 @@
+#!/bin/bash
+# qtail-jsonl — Real-Time JSONL Tail Daemon
+# Unit 2: Monitor JSONL file with inotify. On append, emit new records to stdout in real-time.
+# Usage: qtail-jsonl /path/to/file.jsonl
+
+set -euo pipefail
+
+readonly UNIT="2"
+readonly POLLING_INTERVAL=0.5
+
+# Helper: get current RFC3339 timestamp
+_timestamp() {
+  date -u +'%Y-%m-%dT%H:%M:%SZ'
+}
+
+# Helper: emit error JSON to stderr and exit
+_error() {
+  local msg="$1"
+  local code="${2:-1}"
+
+  jq -c -n \
+    --arg ts "$(_timestamp)" \
+    --arg error "$msg" \
+    '{
+      type: "tail-record",
+      timestamp: $ts,
+      unit: "2",
+      data: null,
+      source: "ERROR",
+      error: $error
+    }' >&2
+
+  exit "$code"
+}
+
+# Helper: validate JSON string
+_is_valid_json() {
+  local json="$1"
+  jq empty <<< "$json" 2>/dev/null && return 0 || return 1
+}
+
+# Helper: get line count of file
+_get_line_count() {
+  local file="$1"
+  wc -l < "$file" 2>/dev/null | xargs || echo 0
+}
+
+# Helper: read line N from file (1-indexed)
+_read_line() {
+  local file="$1"
+  local line_num="$2"
+  sed -n "${line_num}p" "$file"
+}
+
+# Helper: emit a tail record to stdout
+_emit_record() {
+  local jsonl_line="$1"
+  local source_file="$2"
+  local line_number="$3"
+  local current_ts=$(_timestamp)
+
+  # Validate JSON
+  if ! _is_valid_json "$jsonl_line"; then
+    jq -c -n \
+      --arg ts "$current_ts" \
+      --arg src "$source_file" \
+      --arg ln "$line_number" \
+      '{
+        type: "tail-record",
+        timestamp: $ts,
+        unit: "2",
+        data: {source_file: $src, line_number: ($ln | tonumber)},
+        source: "PARSE_ERROR",
+        error: ("Invalid JSON on line " + $ln)
+      }' >&2
+    return 1
+  fi
+
+  # Compact the JSON record
+  local parsed_record
+  parsed_record=$(jq -c . <<< "$jsonl_line" 2>/dev/null) || {
+    echo "Failed to parse JSON on line $line_number" >&2
+    return 1
+  }
+
+  # Emit as tail record (compact JSON)
+  jq -c -n \
+    --arg ts "$current_ts" \
+    --arg src "$source_file" \
+    --arg ln "$line_number" \
+    --argjson rec "$(cat <<< "$parsed_record")" \
+    '{
+      type: "tail-record",
+      timestamp: $ts,
+      unit: "2",
+      data: {
+        record_from_jsonl: $rec,
+        source_file: $src,
+        line_number: ($ln | tonumber)
+      },
+      source: "GROUND_TRUTH",
+      error: null
+    }'
+}
+
+# Main: tail-jsonl daemon
+main() {
+  local jsonl_file="$1"
+
+  # Validate input
+  if [[ -z "$jsonl_file" ]]; then
+    _error "Usage: qtail-jsonl <path-to-file.jsonl>" 1
+  fi
+
+  if [[ ! -f "$jsonl_file" ]]; then
+    _error "File not found: $jsonl_file" 1
+  fi
+
+  # Track line count to detect new appends
+  local last_line_count=0
+
+  # Initial read: emit all existing lines
+  if [[ -s "$jsonl_file" ]]; then
+    local current_count=$(_get_line_count "$jsonl_file")
+    for ((line_num=1; line_num<=current_count; line_num++)); do
+      local line=$(_read_line "$jsonl_file" "$line_num")
+      if [[ -n "$line" ]]; then
+        _emit_record "$line" "$jsonl_file" "$line_num" || true
+      fi
+    done
+    last_line_count=$current_count
+  fi
+
+  # Detect if inotify is available
+  local has_inotify=0
+  if command -v inotifywait &>/dev/null; then
+    has_inotify=1
+  fi
+
+  # Main loop: watch for file modifications
+  if [[ $has_inotify -eq 1 ]]; then
+    # inotify-based monitoring (efficient)
+    while true; do
+      inotifywait -e modify "$jsonl_file" 2>/dev/null || true
+
+      # File was modified — read new lines
+      local current_count=$(_get_line_count "$jsonl_file")
+      for ((line_num=last_line_count+1; line_num<=current_count; line_num++)); do
+        local line=$(_read_line "$jsonl_file" "$line_num")
+        if [[ -n "$line" ]]; then
+          _emit_record "$line" "$jsonl_file" "$line_num" || true
+        fi
+      done
+      last_line_count=$current_count
+    done
+  else
+    # Polling-based fallback
+    jq -c -n \
+      --arg ts "$(_timestamp)" \
+      '{
+        type: "tail-record",
+        timestamp: $ts,
+        unit: "2",
+        data: null,
+        source: "WARNING",
+        error: "inotify not available; using polling (slower)"
+      }' >&2
+
+    while true; do
+      sleep "$POLLING_INTERVAL"
+
+      local current_count=$(_get_line_count "$jsonl_file")
+      if [[ $current_count -gt $last_line_count ]]; then
+        for ((line_num=last_line_count+1; line_num<=current_count; line_num++)); do
+          local line=$(_read_line "$jsonl_file" "$line_num")
+          if [[ -n "$line" ]]; then
+            _emit_record "$line" "$jsonl_file" "$line_num" || true
+          fi
+        done
+        last_line_count=$current_count
+      fi
+    done
+  fi
+}
+
+# Entry point
+main "$@"
