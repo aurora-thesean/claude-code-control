@@ -14,10 +14,8 @@ set -euo pipefail
 # Requires: qreveng-common.sh (sourced by caller or parent)
 
 # Global state: arrays parallel to SENSOR_PIDS
-declare -a SENSOR_PIDS=()
-declare -a SENSOR_NAMES=()
-declare -a SENSOR_UNITS=()
-declare -a SENSOR_LAUNCH_TIMES=()
+# Note: These are declared by the caller (qreveng-daemon) so we don't re-declare them here
+# to avoid shadowing the parent scope's arrays
 
 # ─── SENSOR LAUNCHING FUNCTIONS ────────────────────────────────────────────
 
@@ -26,9 +24,9 @@ _launch_unit_1_qsession_id() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qsession-id" 2>/dev/null); then
-        _emit_coordinate 1 "qsession-id" "$output" "null"
+        _emit_coordinate 1 "qsession-id" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 1 "qsession-id" 'null' "qsession-id failed"
+        _emit_coordinate 1 "qsession-id" 'null' "qsession-id failed" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done
@@ -52,7 +50,7 @@ _launch_unit_2_qtail_jsonl() {
     fi
 
     if [[ -z "$jsonl_file" ]]; then
-      _emit_coordinate 2 "qtail-jsonl" 'null' "No JSONL file found"
+      _emit_coordinate 2 "qtail-jsonl" 'null' "No JSONL file found" >> "$QREVENG_OUTPUT_FILE"
       return
     fi
 
@@ -61,7 +59,7 @@ _launch_unit_2_qtail_jsonl() {
       if [[ -f "$jsonl_file" ]]; then
         while IFS= read -r line; do
           if [[ -n "$line" ]]; then
-            _emit_coordinate 2 "qtail-jsonl" "$line" "null"
+            _emit_coordinate 2 "qtail-jsonl" "$line" "null" >> "$QREVENG_OUTPUT_FILE"
           fi
         done < <(tail -c +$((last_pos + 1)) "$jsonl_file" 2>/dev/null)
         last_pos=$(wc -c < "$jsonl_file" 2>/dev/null || echo 0)
@@ -77,9 +75,9 @@ _launch_unit_3_qenv_snapshot() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qenv-snapshot" "$TARGET_PID" 2>/dev/null); then
-        _emit_coordinate 3 "qenv-snapshot" "$output" "null"
+        _emit_coordinate 3 "qenv-snapshot" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 3 "qenv-snapshot" 'null' "qenv-snapshot failed"
+        _emit_coordinate 3 "qenv-snapshot" 'null' "qenv-snapshot failed" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done
@@ -92,9 +90,9 @@ _launch_unit_4_qfd_trace() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qfd-trace" "$TARGET_PID" 2>/dev/null); then
-        _emit_coordinate 4 "qfd-trace" "$output" "null"
+        _emit_coordinate 4 "qfd-trace" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 4 "qfd-trace" 'null' "qfd-trace failed"
+        _emit_coordinate 4 "qfd-trace" 'null' "qfd-trace failed" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done
@@ -111,7 +109,7 @@ _launch_unit_5_qjsonl_truth() {
         if model=$(jq -r '.message.model // empty' "$jsonl_file" 2>/dev/null | tail -1); then
           if [[ -n "$model" ]]; then
             payload=$(jq -c -n --arg model "$model" '{model: $model}')
-            _emit_coordinate 5 "qjsonl-truth" "$payload" "null"
+            _emit_coordinate 5 "qjsonl-truth" "$payload" "null" >> "$QREVENG_OUTPUT_FILE"
           fi
         fi
       fi
@@ -131,7 +129,7 @@ _launch_unit_6_libqcapture() {
         status="available"
       fi
       payload=$(jq -c -n --arg status "$status" --arg path "$libpath" '{status: $status, path: $path}')
-      _emit_coordinate 6 "libqcapture" "$payload" "null"
+      _emit_coordinate 6 "libqcapture" "$payload" "null" >> "$QREVENG_OUTPUT_FILE"
       sleep "$INTERVAL"
     done
   } &
@@ -147,7 +145,7 @@ _launch_unit_7_qcapture_net() {
         status="available"
       fi
       payload=$(jq -c -n --arg status "$status" '{status: $status, requires: "tcpdump"}')
-      _emit_coordinate 7 "qcapture-net" "$payload" "null"
+      _emit_coordinate 7 "qcapture-net" "$payload" "null" >> "$QREVENG_OUTPUT_FILE"
       sleep "$INTERVAL"
     done
   } &
@@ -163,7 +161,7 @@ _launch_unit_8_qclaude_inspect() {
         status="ready"
       fi
       payload=$(jq -c -n --arg status "$status" '{status: $status, mechanism: "v8-debugger"}')
-      _emit_coordinate 8 "qclaude-inspect" "$payload" "null"
+      _emit_coordinate 8 "qclaude-inspect" "$payload" "null" >> "$QREVENG_OUTPUT_FILE"
       sleep "$INTERVAL"
     done
   } &
@@ -175,9 +173,9 @@ _launch_unit_9_qwrapper_trace() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qwrapper-trace" "$TARGET_PID" 2>/dev/null); then
-        _emit_coordinate 9 "qwrapper-trace" "$output" "null"
+        _emit_coordinate 9 "qwrapper-trace" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 9 "qwrapper-trace" 'null' "qwrapper-trace not available"
+        _emit_coordinate 9 "qwrapper-trace" 'null' "qwrapper-trace not available" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done
@@ -194,7 +192,7 @@ _launch_unit_10_qdecompile_js() {
         status="unavailable"
       fi
       payload=$(jq -c -n --arg status "$status" '{status: $status}')
-      _emit_coordinate 10 "qdecompile-js" "$payload" "null"
+      _emit_coordinate 10 "qdecompile-js" "$payload" "null" >> "$QREVENG_OUTPUT_FILE"
       sleep "$INTERVAL"
     done
   } &
@@ -206,9 +204,9 @@ _launch_unit_11_qargv_map() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qargv-map" "$TARGET_PID" 2>/dev/null); then
-        _emit_coordinate 11 "qargv-map" "$output" "null"
+        _emit_coordinate 11 "qargv-map" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 11 "qargv-map" 'null' "qargv-map not available"
+        _emit_coordinate 11 "qargv-map" 'null' "qargv-map not available" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done
@@ -221,9 +219,9 @@ _launch_unit_12_qmemmap_read() {
   {
     while true; do
       if output=$("$DAEMON_DIR/qmemmap-read" "$TARGET_PID" 2>/dev/null); then
-        _emit_coordinate 12 "qmemmap-read" "$output" "null"
+        _emit_coordinate 12 "qmemmap-read" "$output" "null" >> "$QREVENG_OUTPUT_FILE"
       else
-        _emit_coordinate 12 "qmemmap-read" 'null' "qmemmap-read not available"
+        _emit_coordinate 12 "qmemmap-read" 'null' "qmemmap-read not available" >> "$QREVENG_OUTPUT_FILE"
       fi
       sleep "$INTERVAL"
     done

@@ -77,6 +77,9 @@ _load_modules() {
       exit 1
     fi
   done
+
+  # Export output file path for launcher modules to use
+  export QREVENG_OUTPUT_FILE="$OUTPUT_FILE"
 }
 
 # ─── USAGE ─────────────────────────────────────────────────────────────────
@@ -161,10 +164,19 @@ _run_daemon() {
   setup_signal_handlers
 
   # Launch all sensors (from qreveng-launcher.sh)
+  # Each sensor emits JSON coordinates to stdout, which we capture and append to the output file
   launch_all_sensors
 
-  # Main event loop: collect output from all sensors (from qreveng-aggregator.sh)
-  # The sensors write their output to stdout, which is redirected to the output file
+  # Collect output from all sensors into a background aggregator process
+  # Each sensor's stdout is piped directly to append to the JSONL file
+  (
+    for pid in "${SENSOR_PIDS[@]}"; do
+      wait "$pid" 2>/dev/null || true
+    done
+  ) &
+  local wait_pid=$!
+
+  # Main event loop: monitor sensor processes until completion or duration limit
   local start_time=$(date +%s)
   local elapsed=0
 
@@ -191,9 +203,12 @@ _run_daemon() {
       break
     fi
 
-    # Small sleep to avoid busy-waiting
+    # Yield to allow sensors to produce output
     sleep 0.1
   done
+
+  # Wait for aggregator to finish
+  wait "$wait_pid" 2>/dev/null || true
 
   # Cleanup is called automatically by the EXIT trap
   cleanup
