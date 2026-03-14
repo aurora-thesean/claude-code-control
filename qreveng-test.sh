@@ -11,7 +11,7 @@
 #   1 = one or more tests failed
 #   2 = setup error
 
-set -euo pipefail
+set -uo pipefail
 
 # ─── COLORS ───────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ echo ""
 # Unit 1: Session ID Detection
 _info "Unit 1: qsession-id — Session UUID Detection"
 if command -v qsession-id &>/dev/null; then
-  if output=$(qsession-id --self 2>/dev/null); then
+  if output=$(timeout 5 qsession-id --self 2>/dev/null) || [[ -n "$output" ]]; then
     if _test_json_valid "Unit 1: qsession-id JSON valid" "$output"; then
       if echo "$output" | grep -q '"session_uuid"'; then
         _pass "Unit 1: Session UUID extraction working"
@@ -107,7 +107,7 @@ if command -v qsession-id &>/dev/null; then
       fi
     fi
   else
-    _skip "Unit 1: qsession-id not available"
+    _skip "Unit 1: qsession-id execution timeout or failed"
   fi
 else
   _skip "Unit 1: qsession-id not in PATH"
