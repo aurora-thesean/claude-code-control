@@ -1,159 +1,104 @@
-/*
- * libqcapture.c — LD_PRELOAD File I/O Hook
- * Intercepts open(), write(), read() syscalls
- * Logs JSONL write operations to /tmp/qcapture.log
- * Minimal, zero-dependency implementation
- */
-
 #define _GNU_SOURCE
 #include <dlfcn.h>
-#include <fcntl.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <time.h>
+#include <pthread.h>
+#include <stdlib.h>
 
-/* Original function pointers */
-static int (*original_open)(const char *pathname, int flags, ...) = NULL;
+/* Mutex for thread-safe logging */
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Original write function pointer */
 static ssize_t (*original_write)(int fd, const void *buf, size_t count) = NULL;
-static ssize_t (*original_read)(int fd, void *buf, size_t count) = NULL;
 
-/* Log file handle (per-process) */
-static int logfd = -1;
-static int logfile_initialized = 0;
-
-/* Initialize original function pointers */
-static void init_hooks(void) {
-    if (original_open != NULL) return;
-
-    original_open = dlsym(RTLD_NEXT, "open");
-    original_write = dlsym(RTLD_NEXT, "write");
-    original_read = dlsym(RTLD_NEXT, "read");
-}
-
-/* Get or initialize log file */
-static int get_logfd(void) {
-    if (!logfile_initialized) {
-        logfile_initialized = 1;
-        init_hooks();  /* Ensure hooks are initialized before calling original_open */
-        if (original_open != NULL) {
-            logfd = original_open("/tmp/qcapture.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+/* Get original write() function */
+static void init_write(void) {
+    if (original_write == NULL) {
+        original_write = dlsym(RTLD_NEXT, "write");
+        if (!original_write) {
+            fprintf(stderr, "qcapture: Failed to find original write()\n");
+            exit(1);
         }
     }
-    return logfd;
 }
 
-/* Write JSON line to log (atomic) */
-static void log_json(const char *action, const char *path, int flags,
-                     int fd, size_t count) {
-    if (logfd < 0) return;
+/* Get filename from file descriptor */
+static int get_filename_from_fd(int fd, char *buffer, size_t buflen) {
+    char path[256];
+    ssize_t len;
 
-    time_t now = time(NULL);
-    struct tm *tm_info = gmtime(&now);
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    len = readlink(path, buffer, buflen - 1);
+
+    if (len > 0) {
+        buffer[len] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+/* Check if filename ends with .jsonl */
+static int is_jsonl_file(const char *filename) {
+    if (!filename) return 0;
+
+    size_t len = strlen(filename);
+    if (len < 6) return 0;  /* Minimum: "x.jsonl" */
+
+    return strcmp(filename + len - 6, ".jsonl") == 0;
+}
+
+/* Get current ISO8601 timestamp */
+static void get_timestamp(char *buffer, size_t buflen) {
+    time_t now;
+    struct tm *tm_info;
+
+    time(&now);
+    tm_info = gmtime(&now);
+    strftime(buffer, buflen, "%Y-%m-%dT%H:%M:%SZ", tm_info);
+}
+
+/* Log JSONL write to /tmp/qcapture.log */
+static void log_jsonl_write(int fd, const void *buf, size_t count) {
+    FILE *logfile;
+    char filename[512];
     char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
 
-    /* JSON-safe string escape for path */
-    char safe_path[512];
-    int j = 0;
-    for (int i = 0; path && path[i] && i < 500; i++) {
-        if (path[i] == '"') {
-            safe_path[j++] = '\\';
-            safe_path[j++] = '"';
-        } else if (path[i] == '\\') {
-            safe_path[j++] = '\\';
-            safe_path[j++] = '\\';
-        } else {
-            safe_path[j++] = path[i];
-        }
+    /* Get filename from fd */
+    if (!get_filename_from_fd(fd, filename, sizeof(filename))) {
+        return;  /* Failed to get filename, skip logging */
     }
-    safe_path[j] = '\0';
 
-    /* Build JSON object */
-    char json_line[1024];
-    int len;
-    if (strcmp(action, "open") == 0) {
-        len = snprintf(json_line, sizeof(json_line),
-                      "{\"timestamp\":\"%s\",\"action\":\"open\",\"path\":\"%s\",\"flags\":%d}\n",
-                      timestamp, safe_path, flags);
-    } else if (strcmp(action, "write") == 0) {
-        len = snprintf(json_line, sizeof(json_line),
-                      "{\"timestamp\":\"%s\",\"action\":\"write\",\"fd\":%d,\"count\":%zu}\n",
-                      timestamp, fd, count);
-    } else if (strcmp(action, "read") == 0) {
-        len = snprintf(json_line, sizeof(json_line),
-                      "{\"timestamp\":\"%s\",\"action\":\"read\",\"fd\":%d,\"count\":%zu}\n",
-                      timestamp, fd, count);
-    } else {
+    /* Only log JSONL files */
+    if (!is_jsonl_file(filename)) {
         return;
     }
 
-    if (len > 0 && len < (int)sizeof(json_line) && logfd >= 0) {
-        original_write(logfd, json_line, len);
-    }
-}
+    get_timestamp(timestamp, sizeof(timestamp));
 
-/* Intercept open() */
-int open(const char *pathname, int flags, ...) {
-    init_hooks();
+    /* Thread-safe file logging */
+    pthread_mutex_lock(&log_mutex);
 
-    /* Call original */
-    int result;
-    va_list args;
-    va_start(args, flags);
-    result = original_open(pathname, flags, args);
-    va_end(args);
-
-    /* Log if JSONL file */
-    if (pathname && strstr(pathname, ".jsonl") != NULL) {
-        int lf = get_logfd();
-        if (lf >= 0) {
-            log_json("open", pathname, flags, result, 0);
-        }
+    logfile = fopen("/tmp/qcapture.log", "a");
+    if (logfile) {
+        /* Write as JSON line */
+        fprintf(logfile, "{\"timestamp\":\"%s\",\"action\":\"write_intercept\",\"fd\":%d,\"filename\":\"%s\",\"bytes_written\":%zu}\n",
+                timestamp, fd, filename, count);
+        fclose(logfile);
     }
 
-    return result;
+    pthread_mutex_unlock(&log_mutex);
 }
 
-/* Intercept write() */
+/* Hooked write() function */
 ssize_t write(int fd, const void *buf, size_t count) {
-    init_hooks();
+    init_write();
 
-    /* Call original */
-    ssize_t result = original_write(fd, buf, count);
+    /* Log JSONL writes */
+    log_jsonl_write(fd, buf, count);
 
-    /* Log if buffer contains .jsonl marker (heuristic for JSONL writes) */
-    if (result > 0 && buf != NULL) {
-        const char *data = (const char *)buf;
-        if (memchr(data, '{', count) != NULL || memchr(data, '}', count) != NULL) {
-            int lf = get_logfd();
-            if (lf >= 0) {
-                log_json("write", NULL, 0, fd, count);
-            }
-        }
-    }
-
-    return result;
-}
-
-/* Intercept read() */
-ssize_t read(int fd, void *buf, size_t count) {
-    init_hooks();
-
-    /* Call original */
-    ssize_t result = original_read(fd, buf, count);
-
-    /* Log if buffer contains .jsonl marker (heuristic) */
-    if (result > 0 && buf != NULL) {
-        const char *data = (const char *)buf;
-        if (memchr(data, '{', result) != NULL || memchr(data, '}', result) != NULL) {
-            int lf = get_logfd();
-            if (lf >= 0) {
-                log_json("read", NULL, 0, fd, result);
-            }
-        }
-    }
-
-    return result;
+    /* Call original write() */
+    return original_write(fd, buf, count);
 }
