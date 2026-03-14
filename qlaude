@@ -47,8 +47,9 @@ QLAUDE_RESET_TIME_FILE="$AURORA_AGENT_DIR/.qlaude-reset-time"
 # Audit log file
 QLAUDE_AUDIT_LOG="$AURORA_AGENT_DIR/.qlaude-audit.jsonl"
 
-# Warrant storage (for NESTED_LOA delegation)
-WARRANTS_DIR="$AURORA_AGENT_DIR/warrants"
+# Daemon coordination (Unit 10: qreveng-daemon)
+QREVENG_OUTPUT="$AURORA_AGENT_DIR/qreveng.jsonl"
+DAEMON_COORDINATION_FILE="$AURORA_AGENT_DIR/.qlaude-daemon-coord"
 
 # --- Utility Functions ---
 
@@ -65,8 +66,47 @@ _ensure_aurora_agent_dir() {
   mkdir -p "$AURORA_AGENT_DIR" 2>/dev/null || true
 }
 
+# ─── DAEMON COORDINATION (Unit 10) ─────────────────────────────
+
+# Check if qreveng-daemon is currently running
+_is_daemon_running() {
+  pgrep -f "qreveng-daemon" &>/dev/null
+}
+
+# Mark an action as coordinated with daemon (avoid duplicate logging)
+# When daemon is running, it's already logging sensor data
+# qlaude should supplement with approval gate info, not duplicate
+_mark_daemon_coordination() {
+  local action="$1"
+  local target="$2"
+
+  _ensure_aurora_agent_dir
+
+  # Create coordination marker with timestamp
+  local marker="{\"action\":\"$action\",\"target\":\"$target\",\"timestamp\":\"$(date -Iseconds)\",\"coordinated_with_daemon\":true}"
+  echo "$marker" >> "$DAEMON_COORDINATION_FILE" 2>/dev/null || true
+}
+
+# Check if daemon output is available and fresh
+_daemon_output_available() {
+  [[ -f "$QREVENG_OUTPUT" ]] && [[ $(($(date +%s) - $(stat -c %Y "$QREVENG_OUTPUT" 2>/dev/null || echo 0))) -lt 60 ]]
+}
+
+# Coordinate with daemon: if running, mark action; otherwise use standard audit log
+_coordinate_with_daemon() {
+  local action="$1"
+  local target="$2"
+  local qc_level="$3"
+
+  if _is_daemon_running; then
+    _mark_daemon_coordination "$action" "$target"
+    _log "[DAEMON COORDINATED] $action $target (Unit 10 orchestrating sensors)"
+  else
+    _log "[DIRECT AUDIT] $action $target (daemon not running, standard audit logging)"
+  fi
+}
+
 # Write audit log entry (JSONL format)
-# Extended version that supports NESTED_LOA parent context
 _audit_log() {
   local action="$1"
   local target="$2"
@@ -74,8 +114,6 @@ _audit_log() {
   local qc_level="$4"
   local loa_cap="$5"
   local reason="${6:-}"
-  local parent_uuid="${7:-}"  # Optional: parent UUID for nested delegation
-  local warrant_id="${8:-}"   # Optional: warrant ID for decision context
 
   _ensure_aurora_agent_dir
 
@@ -83,7 +121,6 @@ _audit_log() {
   local json
   json=$(AUDIT_ACTION="$action" AUDIT_TARGET="$target" AUDIT_DECISION="$decision" \
          AUDIT_QC_LEVEL="$qc_level" AUDIT_LOA_CAP="$loa_cap" AUDIT_REASON="$reason" \
-         AUDIT_PARENT_UUID="$parent_uuid" AUDIT_WARRANT_ID="$warrant_id" \
          python3 << 'PYJSON'
 import json
 import os
@@ -99,20 +136,46 @@ entry = {
     "reason": os.environ.get("AUDIT_REASON", "")
 }
 
-# Add NESTED_LOA context if available
-parent_uuid = os.environ.get("AUDIT_PARENT_UUID", "").strip()
-warrant_id = os.environ.get("AUDIT_WARRANT_ID", "").strip()
-if parent_uuid:
-    entry["parent_uuid"] = parent_uuid
-if warrant_id:
-    entry["warrant_id"] = warrant_id
-
 print(json.dumps(entry))
 PYJSON
   )
 
   # Append to audit log atomically
   echo "$json" >> "$QLAUDE_AUDIT_LOG" 2>/dev/null || true
+}
+
+# Write model transition entry to Unit 10 stream (qreveng.jsonl)
+# Format: timestamp, action (model_switch), old_model, new_model, source
+_log_model_transition() {
+  local old_model="$1"
+  local new_model="$2"
+  local source="${3:-qlaude}"
+
+  _ensure_aurora_agent_dir
+
+  # Build JSON entry using Unit 10 format
+  local json
+  json=$(OLD_MODEL="$old_model" NEW_MODEL="$new_model" MODEL_SOURCE="$source" \
+         python3 << 'PYJSON'
+import json
+import os
+from datetime import datetime, timezone
+
+entry = {
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "action": "model_switch",
+    "old_model": os.environ.get("OLD_MODEL", ""),
+    "new_model": os.environ.get("NEW_MODEL", ""),
+    "source": os.environ.get("MODEL_SOURCE", "qlaude")
+}
+
+print(json.dumps(entry))
+PYJSON
+  )
+
+  # Append to qreveng stream (Unit 10 format)
+  QREVENG_LOG="${AURORA_AGENT_DIR}/qreveng.jsonl"
+  echo "$json" >> "$QREVENG_LOG" 2>/dev/null || true
 }
 
 # Check AGENTS.md authorization for current agent
@@ -249,6 +312,10 @@ _gate_auto_approve() {
   esac
 
   _audit_log "$action" "$target" "APPROVED" "$(_qc_level_name "$qc_level")" "$loa_cap" "$reason"
+
+  # Coordinate with daemon (Unit 10) to avoid duplicate logging
+  _coordinate_with_daemon "$action" "$target" "$qc_level"
+
   _log "[APPROVED] $action $([ -n "$target" ] && echo "$target" || echo "")(QC=$(_qc_level_name "$qc_level"))"
 }
 
@@ -328,78 +395,70 @@ EOF
 # --- Session Tree Functions ---
 
 # Find all sessionIds that share the same parentUuid in a JSONL file
-# OPTIMIZATION: Bash/awk implementation instead of Python (avoids subprocess spawn)
 _find_siblings_in_file() {
   local jsonl_file="$1"
   local target_uuid="$2"
 
-  # Fall back to Python for now - the bash JSON parsing is complex and error-prone
-  # A proper implementation would need robust JSON parsing (not regex-based)
-  # This serves as a placeholder for future Bash JSON parser development
+  # Python is more reliable for JSON parsing
   python3 -c "
 import json
 import sys
 
 target_uuid = '$target_uuid'
-uuid_to_parent = {}
-parent_to_siblings = {}
+parent_map = {}  # parentUuid -> [sessionIds]
+uuid_to_parent = {}  # sessionId -> parentUuid
 
-try:
-    with open('$jsonl_file') as f:
-        for line in f:
-            try:
-                r = json.loads(line)
-                sid = r.get('sessionId', '')
-                parent = r.get('parentUuid', '')
+with open('$jsonl_file') as f:
+    for line in f:
+        try:
+            r = json.loads(line)
+            sid = r.get('sessionId', '')
+            parent = r.get('parentUuid', '')
 
-                if sid and parent:
-                    uuid_to_parent[sid] = parent
-                    if parent not in parent_to_siblings:
-                        parent_to_siblings[parent] = []
-                    parent_to_siblings[parent].append(sid)
-            except:
-                pass
+            if sid and parent:
+                uuid_to_parent[sid] = parent
+                if parent not in parent_map:
+                    parent_map[parent] = set()
+                parent_map[parent].add(sid)
+        except:
+            pass
 
-    if target_uuid not in uuid_to_parent:
-        sys.exit(1)
-
-    parent = uuid_to_parent[target_uuid]
-    if parent not in parent_to_siblings:
-        sys.exit(1)
-
-    for sibling in sorted(parent_to_siblings[parent]):
-        print(sibling)
-except:
+# Find target's parent
+if target_uuid not in uuid_to_parent:
     sys.exit(1)
+
+parent = uuid_to_parent[target_uuid]
+if parent not in parent_map:
+    sys.exit(1)
+
+# Print all siblings
+for sibling in sorted(parent_map[parent]):
+    print(sibling)
 " 2>/dev/null
 }
 
 # Find all siblings of a given UUID across all JSONL files
-# OPTIMIZATION: Use fast JSONL lookup (like qhoami) instead of iterating all files
 _list_siblings() {
   local target_uuid="$1"
 
-  # FAST PATH: Find the JSONL containing this UUID (try direct UUID match first)
-  local jsonl_file
-  jsonl_file=$(find "$PROJECT_DIR" -name "${target_uuid}.jsonl" -type f 2>/dev/null | head -1)
+  local found=0
+  for project_dir in "$PROJECT_DIR"/*/; do
+    [[ -d "$project_dir" ]] || continue
 
-  if [[ -z "$jsonl_file" ]]; then
-    # Fallback to searching if direct match failed
-    for f in "$PROJECT_DIR"/*/*.jsonl; do
-      [[ -f "$f" ]] || continue
-      if grep -q "\"sessionId\".*\"$target_uuid\"" "$f" 2>/dev/null; then
-        jsonl_file="$f"
-        break
-      fi
+    for jsonl_file in "$project_dir"*.jsonl; do
+      [[ -f "$jsonl_file" ]] || continue
+
+      while IFS= read -r sibling_uuid; do
+        [[ -n "$sibling_uuid" ]] || continue
+        echo "$sibling_uuid"
+        found=1
+      done < <(_find_siblings_in_file "$jsonl_file" "$target_uuid")
     done
-  fi
+  done
 
-  if [[ -z "$jsonl_file" ]]; then
+  if (( found == 0 )); then
     return 1
   fi
-
-  # OPTIMIZATION: Use Python only once on the single relevant file
-  _find_siblings_in_file "$jsonl_file" "$target_uuid"
 }
 
 # Compute distance (hop count) to a common ancestor between two UUIDs
@@ -545,6 +604,60 @@ print(json.dumps(lineage, indent=2))
   }
 }
 
+# --- Model Transition Detection ---
+
+# Check for model change and log to qreveng.jsonl
+_detect_and_log_model_switch() {
+  local target_uuid="$1"
+
+  # Try to get current model via qhoami
+  if command -v qhoami &>/dev/null; then
+    local current_identity
+    current_identity=$(qhoami "$target_uuid" 2>/dev/null) || return 0
+
+    # Parse model from current session identity
+    local new_model
+    new_model=$(echo "$current_identity" | python3 -c "
+import json
+import sys
+try:
+    data = json.load(sys.stdin)
+    model = data.get('model', {}).get('value', '')
+    if model and model != 'MODEL_UNKNOWN':
+        print(model)
+except:
+    pass
+" 2>/dev/null) || return 0
+
+    # Try to get previous model from qreveng.jsonl
+    if [[ -f "$QREVENG_LOG" ]]; then
+      local old_model
+      old_model=$(tail -1 "$QREVENG_LOG" 2>/dev/null | python3 -c "
+import json
+import sys
+try:
+    data = json.loads(sys.stdin.readline())
+    model = data.get('new_model', '')
+    if model:
+        print(model)
+except:
+    pass
+" 2>/dev/null) || old_model=""
+
+      if [[ -n "$new_model" && "$new_model" != "$old_model" ]]; then
+        _log_model_transition "${old_model:-UNKNOWN}" "$new_model" "qlaude"
+        _log "[MODEL] Transition logged: $old_model -> $new_model"
+      fi
+    else
+      # First time tracking model, log it
+      if [[ -n "$new_model" ]]; then
+        _log_model_transition "UNKNOWN" "$new_model" "qlaude"
+        _log "[MODEL] Initial model logged: $new_model"
+      fi
+    fi
+  fi
+}
+
 # --- Protected Operations ---
 
 # Resume a session (gate varies by QC_LEVEL)
@@ -591,6 +704,9 @@ _resume_session() {
   esac
 
   _log "Resume session: $target_uuid"
+
+  # Detect and log any model transition (Unit 10 integration)
+  _detect_and_log_model_switch "$target_uuid"
 
   # Actual resume implementation
   local tasks_dir="$TASKS_DIR/$target_uuid"
@@ -713,7 +829,6 @@ USAGE:
   $SCRIPT_NAME --resume <uuid> [--confirm]      Resume a session
   $SCRIPT_NAME --fork <uuid> [--confirm]        Fork a session
   $SCRIPT_NAME --autonomous-loop <task>         Run autonomous loop
-  $SCRIPT_NAME --delegate <task> --to <uuid>    Delegate to child (NESTED_LOA)
 
 READ-ONLY OPERATIONS (no gates):
   --list-siblings [<uuid>]       Show all sessionIds sharing same parent.
@@ -739,14 +854,6 @@ PROTECTED OPERATIONS (gates vary by QC_LEVEL):
                                  QC0: FORBIDDEN
                                  QC1: auto-approved + rate-limited (100/hr)
                                  QC2: auto-approved + unlimited
-
-  --delegate <task>              (NESTED_LOA) Create warrant for child delegation.
-    --to <child_uuid>            Child agent to delegate to
-    --with-loa <level>           Proposed autonomy level (0-10, default 4)
-    [--trust <score>]            Trust score 0.0-1.0 (default 0.5)
-    [--time-limit <secs>]        Task time limit in seconds (default 3600)
-                                 QC0-1: FORBIDDEN (requires QC2_FULLY_AUTONOMOUS)
-                                 QC2: auto-approved, warrant created + logged
 
 QC_LEVEL DETERMINATION:
   QC_LEVEL is computed from LOA_CAP in $CLAUDE_GLOBAL_MD:
@@ -781,441 +888,24 @@ _show_version() {
   echo "$SCRIPT_NAME v$VERSION"
 }
 
-# --- Distributed NESTED_LOA (Phase 10) Functions ---
+# --- Optimization: Graceful Shutdown with Flushed State ---
 
-# Send warrant to remote agent over network
-# Usage: _send_warrant_remote <warrant_file> <remote_host> <remote_port>
-# Returns: JSON with transmission status
-# PHASE 10b.3: Automatically signs warrant if private key available
-_send_warrant_remote() {
-  local warrant_file="$1"
-  local remote_host="${2:-}"
-  local remote_port="${3:-9231}"
-
-  if [[ ! -f "$warrant_file" ]]; then
-    _error "Warrant file not found: $warrant_file"
-  fi
-
-  [[ -n "$remote_host" ]] || _error "_send_warrant_remote requires remote_host"
-
-  # Read warrant JSON
-  local warrant_json
-  warrant_json=$(cat "$warrant_file")
-
-  # Extract warranty_id for logging
-  local warrant_id
-  warrant_id=$(echo "$warrant_json" | grep -o '"warrant_id": "[^"]*"' | cut -d'"' -f4)
-
-  # PHASE 10b.3: Auto-sign warrant if qwarrant-sign available and private key exists
-  local private_key_path="$HOME/.aurora-agent/private.pem"
-  local is_signed="false"
-
-  if command -v qwarrant-sign >/dev/null 2>&1 && [[ -f "$private_key_path" ]]; then
-    _log "Signing warrant $warrant_id with RSA-SHA256..."
-
-    # Create temp file for warrant
-    local temp_warrant="/tmp/warrant-to-sign-$$.json"
-    echo "$warrant_json" > "$temp_warrant"
-
-    # Sign it
-    warrant_json=$(qwarrant-sign --sign "$temp_warrant" --key "$private_key_path" 2>/dev/null) || {
-      _log "Warning: Warrant signing failed, continuing with unsigned warrant"
-      is_signed="false"
-    }
-
-    if echo "$warrant_json" | grep -q '"signature"'; then
-      is_signed="true"
-      _log "Warrant signed successfully"
-    fi
-
-    rm -f "$temp_warrant"
-  else
-    _log "Warning: qwarrant-sign not available or private key missing, sending unsigned warrant (Phase 10a)"
-  fi
-
-  _log "Sending warrant $warrant_id to $remote_host:$remote_port (signed: $is_signed)..."
-
-  # Send warrant with retry logic
-  local max_retries=3
-  local retry_count=0
-  local response=""
-  local http_code=""
-
-  while (( retry_count < max_retries )); do
-    # Use curl to POST warrant (signed or unsigned)
-    response=$(curl -s -w "\n%{http_code}" \
-      -X POST "http://$remote_host:$remote_port/warrant" \
-      -H "Content-Type: application/json" \
-      -d "$warrant_json" \
-      --max-time 30 \
-      2>/dev/null) || true
-
-    # Extract HTTP code (last line)
-    http_code=$(echo "$response" | tail -1)
-    # Extract body (all but last line)
-    response=$(echo "$response" | head -n-1)
-
-    if [[ "$http_code" == "200" || "$http_code" == "201" ]]; then
-      _log "Warrant transmitted successfully (HTTP $http_code)"
-
-      # Log successful transmission with signature status
-      _audit_log "warrant-transmit" "$warrant_id" "TRANSMITTED" "2" "6" "Sent to $remote_host:$remote_port (signed: $is_signed)" "" "$warrant_id"
-
-      # Return transmission result
-      python3 << PYJSON
-import json
-from datetime import datetime, timezone
-
-result = {
-    "type": "warrant-transmission",
-    "warrant_id": "$warrant_id",
-    "status": "TRANSMITTED",
-    "remote_endpoint": "$remote_host:$remote_port",
-    "http_code": $http_code,
-    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+# Explicit flush functions for audit and rate-limit state
+# OPTIMIZATION: Batch writes are flushed on process exit
+_flush_audit_on_exit() {
+  # No-op in current monolithic version (audit writes are immediate)
+  # Kept for compatibility with potential future modular versions
+  :
 }
 
-print(json.dumps(result))
-PYJSON
-      return 0
-    fi
-
-    ((retry_count++))
-    if (( retry_count < max_retries )); then
-      local backoff=$((2 ** retry_count))  # Exponential backoff: 2s, 4s, 8s
-      _log "Transmission failed (HTTP $http_code), retrying in ${backoff}s... (attempt $((retry_count + 1))/$max_retries)"
-      sleep "$backoff"
-    fi
-  done
-
-  # All retries exhausted
-  _log "ERROR: Warrant transmission failed after $max_retries attempts"
-  _audit_log "warrant-transmit" "$warrant_id" "FAILED" "2" "6" "Failed to send to $remote_host:$remote_port after $max_retries attempts" "" "$warrant_id"
-
-  python3 << PYJSON
-import json
-from datetime import datetime, timezone
-
-result = {
-    "type": "warrant-transmission",
-    "warrant_id": "$warrant_id",
-    "status": "FAILED",
-    "remote_endpoint": "$remote_host:$remote_port",
-    "reason": "Failed after 3 retries (last HTTP code: $http_code)",
-    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+_flush_rate_limit_on_exit() {
+  # No-op in current monolithic version (rate limit is immediate)
+  # Kept for compatibility with potential future modular versions
+  :
 }
 
-print(json.dumps(result))
-PYJSON
-
-  return 1
-}
-
-# --- NESTED_LOA Warrant Functions ---
-
-# Validate a warrant from a parent agent
-# Usage: _validate_warrant <warrant_file>
-# Returns: JSON with {status: VALID|INVALID|EXPIRED, reason: ...}
-_validate_warrant() {
-  local warrant_file="$1"
-
-  if [[ ! -f "$warrant_file" ]]; then
-    python3 << 'PYJSON'
-import json
-print(json.dumps({
-    "type": "warrant-validation",
-    "status": "INVALID",
-    "reason": "Warrant file not found"
-}))
-PYJSON
-    return 1
-  fi
-
-  # Validate warrant JSON and fields
-  WARRANT_FILE="$warrant_file" python3 << 'PYJSON'
-import json
-import os
-from datetime import datetime, timezone
-
-warrant_file = os.environ.get("WARRANT_FILE", "")
-
-try:
-  with open(warrant_file, 'r') as f:
-    warrant = json.load(f)
-except json.JSONDecodeError:
-  print(json.dumps({
-      "type": "warrant-validation",
-      "status": "INVALID",
-      "reason": "Warrant is not valid JSON"
-  }))
-  sys.exit(1)
-
-# Check required fields
-required_fields = ["warrant_id", "parent_uuid", "child_uuid", "proposed_loa_cap", "expires_at", "parent_loa_cap"]
-missing = [f for f in required_fields if f not in warrant]
-if missing:
-  print(json.dumps({
-      "type": "warrant-validation",
-      "status": "INVALID",
-      "reason": f"Missing required fields: {', '.join(missing)}"
-  }))
-  sys.exit(1)
-
-# Check expiration
-expires_at = datetime.fromisoformat(warrant["expires_at"].replace("Z", "+00:00"))
-now = datetime.now(timezone.utc)
-if now > expires_at:
-  print(json.dumps({
-      "type": "warrant-validation",
-      "status": "EXPIRED",
-      "reason": f"Warrant expired at {warrant['expires_at']}"
-  }))
-  sys.exit(0)
-
-# Validate LOA hierarchy
-if warrant["proposed_loa_cap"] > warrant["parent_loa_cap"]:
-  print(json.dumps({
-      "type": "warrant-validation",
-      "status": "INVALID",
-      "reason": f"Proposed LOA_CAP {warrant['proposed_loa_cap']} exceeds parent LOA_CAP {warrant['parent_loa_cap']}"
-  }))
-  sys.exit(0)
-
-# Warranty is valid
-print(json.dumps({
-    "type": "warrant-validation",
-    "status": "VALID",
-    "warrant_id": warrant["warrant_id"],
-    "parent_uuid": warrant["parent_uuid"],
-    "child_uuid": warrant["child_uuid"],
-    "proposed_loa_cap": warrant["proposed_loa_cap"],
-    "parent_loa_cap": warrant["parent_loa_cap"],
-    "task_description": warrant.get("task_description", ""),
-    "expires_at": warrant["expires_at"],
-    "reason": "Warrant is valid and not expired"
-}))
-PYJSON
-}
-
-# Record a progress update during warrant execution
-# Usage: _report_progress <warrant_id> <decisions_made> <decisions_approved> <decisions_rejected> [status]
-_report_progress() {
-  local warrant_id="$1"
-  local decisions_made="${2:-0}"
-  local decisions_approved="${3:-0}"
-  local decisions_rejected="${4:-0}"
-  local status="${5:-IN_PROGRESS}"
-
-  _ensure_aurora_agent_dir
-
-  local reports_dir="$WARRANTS_DIR/progress"
-  mkdir -p "$reports_dir"
-
-  local report_file="$reports_dir/${warrant_id}_$(date +%s).jsonl"
-
-  python3 << PYJSON > "$report_file"
-import json
-from datetime import datetime, timezone
-
-report = {
-    "type": "task_progress",
-    "warrant_id": "$warrant_id",
-    "child_uuid": "$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo 'unknown')",
-    "decisions_made": $decisions_made,
-    "decisions_approved": $decisions_approved,
-    "decisions_rejected": $decisions_rejected,
-    "approval_rate": round(100.0 * $decisions_approved / max(1, $decisions_made), 1),
-    "status": "$status",
-    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-}
-
-print(json.dumps(report))
-PYJSON
-
-  _log "Progress report recorded for warrant $warrant_id (decisions_made=$decisions_made, approved=$decisions_approved, rejected=$decisions_rejected)"
-
-  # Log to audit trail
-  local reason="Task progress: $decisions_made decisions, $decisions_approved approved, $decisions_rejected rejected"
-  _audit_log "task-progress" "$warrant_id" "$status" "2" "2" "$reason" "" "$warrant_id"
-
-  # Output report details
-  cat "$report_file"
-}
-
-# Child-side: Accept a warrant from parent
-# Usage: _accept_warrant <warrant_file> [--accept | --counter-propose <loa>]
-# Returns: JSON acceptance record
-_accept_warrant() {
-  local warrant_file="$1"
-  local action="${2:-}"
-
-  if [[ ! -f "$warrant_file" ]]; then
-    _error "Warrant file not found: $warrant_file"
-  fi
-
-  # First validate the warrant
-  local validation
-  validation=$(_validate_warrant "$warrant_file")
-
-  if ! echo "$validation" | grep -q '"status": "VALID"'; then
-    _log "Warrant validation failed: $validation"
-    return 1
-  fi
-
-  # Parse warrant details
-  local warrant_id parent_uuid proposed_loa_cap
-  warrant_id=$(grep -o '"warrant_id": "[^"]*"' "$warrant_file" | cut -d'"' -f4)
-  parent_uuid=$(grep -o '"parent_uuid": "[^"]*"' "$warrant_file" | cut -d'"' -f4)
-  proposed_loa_cap=$(grep -o '"proposed_loa_cap": [0-9]*' "$warrant_file" | cut -d' ' -f2)
-
-  # Get current child LOA
-  local child_loa
-  child_loa=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || child_loa=2
-
-  # Determine acceptance status
-  local accepted_loa status reason
-  if [[ "$action" == "--counter-propose" ]]; then
-    local counter_loa="${3:-}"
-    [[ -n "$counter_loa" ]] || _error "Counter-proposal requires LOA value"
-    if (( counter_loa > proposed_loa_cap )); then
-      _error "Cannot counter-propose LOA_CAP=$counter_loa (exceeds parent proposal of $proposed_loa_cap)"
-    fi
-    accepted_loa="$counter_loa"
-    status="NEGOTIATED"
-    reason="Child counter-proposed LOA_CAP=$counter_loa (parent proposed $proposed_loa_cap)"
-  elif (( child_loa >= proposed_loa_cap )); then
-    # Child can handle the proposed LOA
-    accepted_loa="$proposed_loa_cap"
-    status="ACCEPTED"
-    reason="Child can handle proposed LOA_CAP=$proposed_loa_cap"
-  else
-    # Child cannot handle the proposed LOA
-    accepted_loa="$child_loa"
-    status="NEGOTIATED"
-    reason="Child can only handle LOA_CAP=$child_loa (parent proposed $proposed_loa_cap)"
-  fi
-
-  # Create acceptance record
-  _ensure_aurora_agent_dir
-
-  # Create acceptance JSONL record
-  local acceptance_dir="${WARRANTS_DIR}/acceptances"
-  mkdir -p "$acceptance_dir"
-
-  local acceptance_file="$acceptance_dir/${warrant_id}_acceptance.jsonl"
-
-  # Write acceptance record
-  python3 << PYJSON > "$acceptance_file"
-import json
-from datetime import datetime, timezone
-
-acceptance = {
-    "type": "loa_acceptance",
-    "warrant_id": "$warrant_id",
-    "parent_uuid": "$parent_uuid",
-    "child_uuid": "$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo 'unknown')",
-    "proposed_loa_cap": $proposed_loa_cap,
-    "accepted_loa_cap": $accepted_loa,
-    "status": "$status",
-    "reason": "$reason",
-    "child_loa_cap": $child_loa,
-    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-}
-
-print(json.dumps(acceptance))
-PYJSON
-
-  _log "Warrant acceptance recorded: $acceptance_file"
-  _log "Status: $status (accepted_loa=$accepted_loa)"
-
-  # Log to audit trail (with parent context)
-  _audit_log "warrant-accept" "$warrant_id" "$status" "$(( child_loa / 2 ))" "$child_loa" "$reason" "$parent_uuid" "$warrant_id"
-
-  # Return acceptance details
-  cat "$acceptance_file"
-}
-
-# Create a warrant for delegating autonomy to a child agent
-# Usage: _create_warrant <child_uuid> <task_description> <proposed_loa_cap> <trust_score> [time_limit_secs]
-_create_warrant() {
-  local child_uuid="$1"
-  local task_description="$2"
-  local proposed_loa_cap="$3"
-  local trust_score="${4:-0.5}"
-  local time_limit_secs="${5:-3600}"
-
-  # Validate inputs
-  if [[ ! "$child_uuid" =~ ^[a-f0-9-]{36}$ ]]; then
-    _error "Invalid child UUID format: $child_uuid"
-  fi
-
-  if ! [[ "$proposed_loa_cap" =~ ^[0-9]+$ ]] || (( proposed_loa_cap < 0 || proposed_loa_cap > 10 )); then
-    _error "Invalid LOA_CAP: $proposed_loa_cap (must be 0-10)"
-  fi
-
-  # Get parent LOA
-  local parent_loa
-  parent_loa=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || parent_loa=2
-
-  if (( proposed_loa_cap > parent_loa )); then
-    _error "Cannot propose LOA_CAP=$proposed_loa_cap (parent LOA_CAP=$parent_loa)"
-  fi
-
-  # Create warrant directory
-  mkdir -p "$WARRANTS_DIR"
-
-  # Generate warrant ID (UUID-based)
-  local warrant_id
-  warrant_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
-
-  # Create warrant JSON
-  local warrant_file="$WARRANTS_DIR/$warrant_id.json"
-  local expires_at
-  expires_at=$(python3 << 'PYDATE'
-from datetime import datetime, timedelta, timezone
-expires = datetime.now(timezone.utc) + timedelta(hours=1)
-print(expires.isoformat().replace("+00:00", "Z"))
-PYDATE
-  )
-
-  local parent_uuid
-  parent_uuid=$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null || echo "unknown")
-
-  # Write warrant
-  python3 << PYJSON > "$warrant_file"
-import json
-from datetime import datetime, timezone
-
-warrant = {
-    "type": "loa_proposal",
-    "warrant_id": "$warrant_id",
-    "parent_uuid": "$parent_uuid",
-    "child_uuid": "$child_uuid",
-    "task_description": "$task_description",
-    "proposed_loa_cap": $proposed_loa_cap,
-    "trust_score": $trust_score,
-    "time_limit_seconds": $time_limit_secs,
-    "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    "expires_at": "$expires_at",
-    "parent_loa_cap": $parent_loa
-}
-
-print(json.dumps(warrant, indent=2))
-PYJSON
-
-  _log "Warrant created: $warrant_file"
-  _log "Warrant ID: $warrant_id"
-  _log "Child UUID: $child_uuid"
-  _log "Proposed LOA_CAP: $proposed_loa_cap (parent LOA_CAP: $parent_loa)"
-  _log "Trust score: $trust_score"
-  _log "Expires at: $expires_at"
-
-  # Log warrant creation to audit trail (with warrant context)
-  _audit_log "warrant-create" "$warrant_id" "PROPOSED" "$(( parent_loa / 2 ))" "$parent_loa" "Delegating task to $child_uuid with LOA_CAP=$proposed_loa_cap" "$parent_uuid" "$warrant_id"
-
-  # Output warrant details
-  echo "{\"warrant_id\": \"$warrant_id\", \"warrant_file\": \"$warrant_file\"}"
-}
+# Set trap for graceful shutdown (ensures buffered state is flushed)
+trap '_flush_audit_on_exit; _flush_rate_limit_on_exit' EXIT
 
 # --- Main Dispatch ---
 
@@ -1262,10 +952,14 @@ main() {
       local target="${2:-}"
       [[ -n "$target" ]] || _error "--resume requires a UUID argument"
       local confirm="${3:-}"
-      local qc_level
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
       local loa_cap
-      qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
       _check_agents_md "resume" || _log "WARNING: AGENTS.md authorization check failed for resume"
       _resume_session "$target" "$confirm" "$qc_level" "$loa_cap"
       ;;
@@ -1274,10 +968,14 @@ main() {
       local parent="${2:-}"
       [[ -n "$parent" ]] || _error "--fork requires a UUID argument"
       local confirm="${3:-}"
-      local qc_level
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
       local loa_cap
-      qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
       _check_agents_md "fork" || _log "WARNING: AGENTS.md authorization check failed for fork"
       _fork_session "$parent" "$confirm" "$qc_level" "$loa_cap"
       ;;
@@ -1285,232 +983,16 @@ main() {
     --autonomous-loop)
       local task="${2:-}"
       [[ -n "$task" ]] || _error "--autonomous-loop requires a task description"
-      local qc_level
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
       local loa_cap
-      qc_level=$(_get_qc_level)
       loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
       _check_agents_md "autonomous-loop" || _log "WARNING: AGENTS.md authorization check failed for autonomous-loop"
       _autonomous_loop "$task" "$qc_level" "$loa_cap"
-      ;;
-
-    --delegate)
-      # NESTED_LOA: Delegate task to child with proposed autonomy level
-      # Usage: qlaude --delegate <task> --to <child_uuid> --with-loa <level>
-      local task="${2:-}"
-      local child_uuid=""
-      local proposed_loa=4  # Default: supervised level
-      local trust_score=0.5  # Default: moderate trust
-      local time_limit=3600  # Default: 1 hour
-
-      [[ -n "$task" ]] || _error "--delegate requires task description as first argument"
-
-      # Parse remaining arguments
-      shift 2
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --to)
-            child_uuid="${2:-}"
-            [[ -n "$child_uuid" ]] || _error "--to requires a UUID"
-            shift 2
-            ;;
-          --with-loa)
-            proposed_loa="${2:-}"
-            shift 2
-            ;;
-          --trust)
-            trust_score="${2:-}"
-            shift 2
-            ;;
-          --time-limit)
-            time_limit="${2:-}"
-            shift 2
-            ;;
-          *)
-            _error "Unknown argument in --delegate: $1"
-            ;;
-        esac
-      done
-
-      [[ -n "$child_uuid" ]] || _error "--delegate requires --to <child_uuid>"
-
-      local qc_level
-      local loa_cap
-      qc_level=$(_get_qc_level)
-      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
-
-      # Require QC2 (fully autonomous) to create warrants
-      if (( qc_level < 2 )); then
-        _audit_log "warrant-create" "$child_uuid" "REJECTED" "$qc_level" "$loa_cap" "Only QC2_FULLY_AUTONOMOUS can create warrants"
-        _error "Warrant creation requires QC_LEVEL=2 (FULLY_AUTONOMOUS), but current is QC$qc_level"
-      fi
-
-      _check_agents_md "delegate" || _log "WARNING: AGENTS.md authorization check failed for delegate"
-      _create_warrant "$child_uuid" "$task" "$proposed_loa" "$trust_score" "$time_limit"
-      ;;
-
-    --validate-warrant)
-      # NESTED_LOA: Validate a warrant file
-      # Usage: qlaude --validate-warrant <warrant_file>
-      local warrant_file="${2:-}"
-      [[ -n "$warrant_file" ]] || _error "--validate-warrant requires a warrant file path"
-
-      if [[ ! -f "$warrant_file" ]]; then
-        _error "Warrant file not found: $warrant_file"
-      fi
-
-      _validate_warrant "$warrant_file"
-      ;;
-
-    --accept-warrant)
-      # NESTED_LOA: Child accepts a warrant from parent
-      # Usage: qlaude --accept-warrant <warrant_file> [--accept | --counter-propose <loa>]
-      local warrant_file="${2:-}"
-      [[ -n "$warrant_file" ]] || _error "--accept-warrant requires a warrant file path"
-
-      if [[ ! -f "$warrant_file" ]]; then
-        _error "Warrant file not found: $warrant_file"
-      fi
-
-      # Check if counter-proposing
-      local action="${3:-}"
-      if [[ "$action" == "--counter-propose" ]]; then
-        _accept_warrant "$warrant_file" "$action" "${4:-}"
-      else
-        _accept_warrant "$warrant_file" "${action:---accept}"
-      fi
-      ;;
-
-    --report-progress)
-      # NESTED_LOA: Child reports progress on warrant execution
-      # Usage: qlaude --report-progress <warrant_id> <decisions_made> <decisions_approved> <decisions_rejected> [status]
-      local warrant_id="${2:-}"
-      local decisions_made="${3:-0}"
-      local decisions_approved="${4:-0}"
-      local decisions_rejected="${5:-0}"
-      local status="${6:-IN_PROGRESS}"
-
-      [[ -n "$warrant_id" ]] || _error "--report-progress requires a warrant_id"
-      [[ "$warrant_id" =~ ^[a-f0-9-]{36}$ ]] || _error "Invalid warrant_id format: $warrant_id"
-
-      # Validate status
-      case "$status" in
-        IN_PROGRESS|PAUSED|COMPLETED|FAILED)
-          ;;
-        *)
-          _error "Invalid status: $status (must be IN_PROGRESS, PAUSED, COMPLETED, or FAILED)"
-          ;;
-      esac
-
-      _report_progress "$warrant_id" "$decisions_made" "$decisions_approved" "$decisions_rejected" "$status"
-      ;;
-
-    --delegate-remote)
-      # Phase 10: Delegate task to remote agent over network
-      # Usage: qlaude --delegate-remote <task> --to <host:port> --with-loa <level>
-      local task="${2:-}"
-      local remote_endpoint=""
-      local proposed_loa=4
-      local trust_score=0.5
-      local time_limit=3600
-
-      [[ -n "$task" ]] || _error "--delegate-remote requires task description"
-
-      # Parse arguments
-      shift 2
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --to)
-            remote_endpoint="${2:-}"
-            [[ -n "$remote_endpoint" ]] || _error "--to requires host:port"
-            shift 2
-            ;;
-          --with-loa)
-            proposed_loa="${2:-}"
-            shift 2
-            ;;
-          --trust)
-            trust_score="${2:-}"
-            shift 2
-            ;;
-          --time-limit)
-            time_limit="${2:-}"
-            shift 2
-            ;;
-          *)
-            _error "Unknown argument in --delegate-remote: $1"
-            ;;
-        esac
-      done
-
-      [[ -n "$remote_endpoint" ]] || _error "--delegate-remote requires --to <host:port>"
-
-      # Parse host and port
-      local remote_host="${remote_endpoint%:*}"
-      local remote_port="${remote_endpoint#*:}"
-      [[ -n "$remote_host" ]] || _error "Invalid host:port format: $remote_endpoint"
-      [[ -n "$remote_port" ]] || remote_port=9231
-
-      # Check authority
-      local qc_level
-      local loa_cap
-      qc_level=$(_get_qc_level)
-      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
-
-      if (( qc_level < 2 )); then
-        _audit_log "warrant-transmit" "unknown" "REJECTED" "$qc_level" "$loa_cap" "Remote delegation requires QC2_FULLY_AUTONOMOUS"
-        _error "Remote delegation requires QC_LEVEL=2 (FULLY_AUTONOMOUS), but current is QC$qc_level"
-      fi
-
-      # Create local warrant first
-      local child_uuid="unknown-remote"  # Will be updated when child responds
-      local warrant_output
-      warrant_output=$(_create_warrant "$child_uuid" "$task" "$proposed_loa" "$trust_score" "$time_limit" 2>&1)
-
-      local warrant_id
-      warrant_id=$(echo "$warrant_output" | grep -o '"warrant_id": "[^"]*"' | tail -1 | cut -d'"' -f4)
-
-      if [[ -z "$warrant_id" ]]; then
-        _error "Failed to create local warrant before transmission"
-      fi
-
-      local warrant_file="$AURORA_AGENT_DIR/warrants/$warrant_id.json"
-
-      # Send warrant to remote agent
-      _log "Transmitting warrant to remote agent at $remote_endpoint..."
-      _send_warrant_remote "$warrant_file" "$remote_host" "$remote_port"
-      ;;
-
-    --send-warrant)
-      # Phase 10: Send an existing warrant file to remote agent
-      # Usage: qlaude --send-warrant <warrant_file> --to <host:port>
-      local warrant_file="${2:-}"
-      local remote_endpoint=""
-
-      [[ -n "$warrant_file" ]] || _error "--send-warrant requires warrant file path"
-      [[ -f "$warrant_file" ]] || _error "Warrant file not found: $warrant_file"
-
-      # Parse arguments
-      shift 2
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --to)
-            remote_endpoint="${2:-}"
-            [[ -n "$remote_endpoint" ]] || _error "--to requires host:port"
-            shift 2
-            ;;
-          *)
-            _error "Unknown argument in --send-warrant: $1"
-            ;;
-        esac
-      done
-
-      [[ -n "$remote_endpoint" ]] || _error "--send-warrant requires --to <host:port>"
-
-      local remote_host="${remote_endpoint%:*}"
-      local remote_port="${remote_endpoint#*:}"
-      [[ -n "$remote_port" ]] || remote_port=9231
-
-      _send_warrant_remote "$warrant_file" "$remote_host" "$remote_port"
       ;;
 
     "")
