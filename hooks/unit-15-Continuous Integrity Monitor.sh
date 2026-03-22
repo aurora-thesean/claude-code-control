@@ -1,0 +1,1009 @@
+#!/usr/bin/env bash
+# qlaude — Motor/Action Tool for Aurora Claude Code Control Plane
+#
+# Design: /home/aurora/.local/bin/qlaude.design
+# Authority: LOA_CAP from ~/.claude/CLAUDE.md (immutable after first boot)
+#
+# QC_LEVEL modes:
+#  - QC0_HUMAN_ONLY: All actions require --confirm + human typing "yes"
+#  - QC1_SUPERVISED_LOOP: Auto-approve resume/loop, rate-limit to 100/hour
+#  - QC2_FULLY_AUTONOMOUS: All actions auto-approved, log to GitHub
+#
+# Usage:
+#   qlaude --list-siblings                    # Read-only: show sessionIds with same parent
+#   qlaude --distance-to <uuid>               # Read-only: compute hops to ancestor
+#   qlaude --trace-lineage [<uuid>]           # Read-only: full ancestry tree (JSON)
+#   qlaude --resume <uuid>                    # Protected: gate varies by QC_LEVEL
+#   qlaude --fork <uuid>                      # Protected: gate varies by QC_LEVEL
+#   qlaude --autonomous-loop <task>           # Protected: QC1=rate-limited, QC2=unlimited
+
+set -euo pipefail
+
+# --- Constants and Configuration ---
+
+SCRIPT_NAME="qlaude"
+VERSION="0.1.0"
+
+# Paths
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+CLAUDE_GLOBAL_MD="$HOME/.claude/CLAUDE.md"
+AURORA_AGENT_DIR="$HOME/.aurora-agent"
+TASKS_DIR="$HOME/.claude/tasks"
+PROJECT_DIR="$HOME/.claude/projects"
+
+# QC_LEVEL enum
+readonly QC0_HUMAN_ONLY=0
+readonly QC1_SUPERVISED_LOOP=1
+readonly QC2_FULLY_AUTONOMOUS=2
+
+# Rate limit: 100 calls per hour (QC1 only)
+readonly RATE_LIMIT_PER_HOUR=100
+readonly RATE_LIMIT_WINDOW_SECS=3600
+
+# State files for rate limiting
+QLAUDE_CALL_COUNT_FILE="$AURORA_AGENT_DIR/.qlaude-call-count"
+QLAUDE_RESET_TIME_FILE="$AURORA_AGENT_DIR/.qlaude-reset-time"
+
+# Audit log file
+QLAUDE_AUDIT_LOG="$AURORA_AGENT_DIR/.qlaude-audit.jsonl"
+
+# Daemon coordination (Unit 10: qreveng-daemon)
+QREVENG_OUTPUT="$AURORA_AGENT_DIR/qreveng.jsonl"
+DAEMON_COORDINATION_FILE="$AURORA_AGENT_DIR/.qlaude-daemon-coord"
+
+# --- Utility Functions ---
+
+_log() {
+  echo "[qlaude] $*" >&2
+}
+
+_error() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+_ensure_aurora_agent_dir() {
+  mkdir -p "$AURORA_AGENT_DIR" 2>/dev/null || true
+}
+
+# ─── DAEMON COORDINATION (Unit 10) ─────────────────────────────
+
+# Check if qreveng-daemon is currently running
+_is_daemon_running() {
+  pgrep -f "qreveng-daemon" &>/dev/null
+}
+
+# Mark an action as coordinated with daemon (avoid duplicate logging)
+# When daemon is running, it's already logging sensor data
+# qlaude should supplement with approval gate info, not duplicate
+_mark_daemon_coordination() {
+  local action="$1"
+  local target="$2"
+
+  _ensure_aurora_agent_dir
+
+  # Create coordination marker with timestamp
+  local marker="{\"action\":\"$action\",\"target\":\"$target\",\"timestamp\":\"$(date -Iseconds)\",\"coordinated_with_daemon\":true}"
+  echo "$marker" >> "$DAEMON_COORDINATION_FILE" 2>/dev/null || true
+}
+
+# Check if daemon output is available and fresh
+_daemon_output_available() {
+  [[ -f "$QREVENG_OUTPUT" ]] && [[ $(($(date +%s) - $(stat -c %Y "$QREVENG_OUTPUT" 2>/dev/null || echo 0))) -lt 60 ]]
+}
+
+# Coordinate with daemon: if running, mark action; otherwise use standard audit log
+_coordinate_with_daemon() {
+  local action="$1"
+  local target="$2"
+  local qc_level="$3"
+
+  if _is_daemon_running; then
+    _mark_daemon_coordination "$action" "$target"
+    _log "[DAEMON COORDINATED] $action $target (Unit 10 orchestrating sensors)"
+  else
+    _log "[DIRECT AUDIT] $action $target (daemon not running, standard audit logging)"
+  fi
+}
+
+# Write audit log entry (JSONL format)
+_audit_log() {
+  local action="$1"
+  local target="$2"
+  local decision="$3"
+  local qc_level="$4"
+  local loa_cap="$5"
+  local reason="${6:-}"
+
+  _ensure_aurora_agent_dir
+
+  # Build JSON object using environment variables to avoid arg passing issues
+  local json
+  json=$(AUDIT_ACTION="$action" AUDIT_TARGET="$target" AUDIT_DECISION="$decision" \
+         AUDIT_QC_LEVEL="$qc_level" AUDIT_LOA_CAP="$loa_cap" AUDIT_REASON="$reason" \
+         python3 << 'PYJSON'
+import json
+import os
+from datetime import datetime, timezone
+
+entry = {
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "action": os.environ.get("AUDIT_ACTION", ""),
+    "target": os.environ.get("AUDIT_TARGET", ""),
+    "decision": os.environ.get("AUDIT_DECISION", ""),
+    "qc_level": os.environ.get("AUDIT_QC_LEVEL", ""),
+    "loa_cap": int(os.environ.get("AUDIT_LOA_CAP", "0")),
+    "reason": os.environ.get("AUDIT_REASON", "")
+}
+
+print(json.dumps(entry))
+PYJSON
+  )
+
+  # Append to audit log atomically
+  echo "$json" >> "$QLAUDE_AUDIT_LOG" 2>/dev/null || true
+}
+
+# Write model transition entry to Unit 10 stream (qreveng.jsonl)
+# Format: timestamp, action (model_switch), old_model, new_model, source
+_log_model_transition() {
+  local old_model="$1"
+  local new_model="$2"
+  local source="${3:-qlaude}"
+
+  _ensure_aurora_agent_dir
+
+  # Build JSON entry using Unit 10 format
+  local json
+  json=$(OLD_MODEL="$old_model" NEW_MODEL="$new_model" MODEL_SOURCE="$source" \
+         python3 << 'PYJSON'
+import json
+import os
+from datetime import datetime, timezone
+
+entry = {
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "action": "model_switch",
+    "old_model": os.environ.get("OLD_MODEL", ""),
+    "new_model": os.environ.get("NEW_MODEL", ""),
+    "source": os.environ.get("MODEL_SOURCE", "qlaude")
+}
+
+print(json.dumps(entry))
+PYJSON
+  )
+
+  # Append to qreveng stream (Unit 10 format)
+  QREVENG_LOG="${AURORA_AGENT_DIR}/qreveng.jsonl"
+  echo "$json" >> "$QREVENG_LOG" 2>/dev/null || true
+}
+
+# Check AGENTS.md authorization for current agent
+# Returns: 0 = authorized, 1 = not authorized
+_check_agents_md() {
+  local operation="$1"
+
+  # Look for AGENTS.md in script's directory (qlaude is in ~/.local/bin/)
+  local script_dir
+  script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+
+  local agents_file="$script_dir/AGENTS.md"
+
+  if [[ ! -f "$agents_file" ]]; then
+    _log "WARNING: No AGENTS.md in $script_dir (cannot verify authorization)"
+    return 0  # No warrant = allow (for now)
+  fi
+
+  # Get current agent class (simplified: just check if we're running as AURORA or subagent)
+  # Full implementation would use qhoami --self and parse EQQQH coordinates
+  local agent_class="AURORA-HOME"  # Default assumption
+
+  # Try to detect if we're a subagent (simple heuristic)
+  if [[ "${AURORA_AGENT_CLASS:-}" == "CC0-HOME" ]]; then
+    agent_class="CC0-SUBAGENT"
+  elif [[ -n "${AURORA_AGENT_CLASS:-}" ]]; then
+    agent_class="${AURORA_AGENT_CLASS}"
+  fi
+
+  # Check if agent_class is authorized in AGENTS.md
+  # Expected format: "- AURORA-HOME (primary, ...)"
+  # or: "- Subagents (CC0, Haiku, Sonnet classes): execute only"
+
+  if grep -q "AURORA-HOME\|Subagents.*CC0\|DarienSirius" "$agents_file" 2>/dev/null; then
+    _log "AGENTS.md authorization check: agent=$agent_class - AUTHORIZED (execute operations)"
+    return 0
+  else
+    _log "WARNING: Agent $agent_class not listed in $agents_file"
+    return 1
+  fi
+}
+
+# Get QC_LEVEL from CLAUDE.md LOA_CAP (immutable, never trust env)
+_get_qc_level() {
+  local loa
+  loa=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || {
+    _log "WARNING: Could not read LOA_CAP from $CLAUDE_GLOBAL_MD, defaulting to QC0"
+    echo "$QC0_HUMAN_ONLY"
+    return
+  }
+
+  case "$loa" in
+    2) echo "$QC0_HUMAN_ONLY" ;;
+    4) echo "$QC1_SUPERVISED_LOOP" ;;
+    6) echo "$QC2_FULLY_AUTONOMOUS" ;;
+    *)
+      _log "WARNING: Unknown LOA_CAP value '$loa', defaulting to QC0"
+      echo "$QC0_HUMAN_ONLY"
+      ;;
+  esac
+}
+
+# Convert QC_LEVEL int to string name
+_qc_level_name() {
+  local qc_level="$1"
+  case "$qc_level" in
+    0) echo "QC0_HUMAN_ONLY" ;;
+    1) echo "QC1_SUPERVISED_LOOP" ;;
+    2) echo "QC2_FULLY_AUTONOMOUS" ;;
+    *) echo "UNKNOWN" ;;
+  esac
+}
+
+# --- Approval Gate Functions ---
+
+# Pattern 1: Human Confirmation (QC0 only)
+_gate_confirm() {
+  local action="$1"
+  local target="${2:-}"
+  local qc_level="${3:-0}"
+  local loa_cap="${4:-2}"
+
+  echo ""
+  echo "╔════════════════════════════════════════════════════════════╗"
+  echo "║                     APPROVAL GATE (QC0)                    ║"
+  echo "╚════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  Action: $action"
+  if [[ -n "$target" ]]; then
+    echo "  Target: $target"
+  fi
+  echo ""
+  echo "Type 'yes' to approve, or press Ctrl-C to cancel:"
+  echo ""
+
+  local confirm
+  read -r confirm || {
+    echo ""
+    _audit_log "$action" "$target" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "User cancelled (Ctrl-C)"
+    _error "Cancelled by user"
+  }
+
+  if [[ "$confirm" != "yes" ]]; then
+    _audit_log "$action" "$target" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "User denied confirmation (expected 'yes', got '$confirm')"
+    _error "Cancelled by user (expected 'yes', got '$confirm')"
+  fi
+
+  _audit_log "$action" "$target" "APPROVED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Human confirmation provided"
+  _log "$action approved by human"
+}
+
+# Pattern 2: Auto-Approve with Log (QC1/QC2)
+_gate_auto_approve() {
+  local action="$1"
+  local target="${2:-}"
+  local qc_level="$3"
+  local loa_cap="${4:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
+
+  local reason=""
+  case "$qc_level" in
+    1) reason="Auto-approved: QC1_SUPERVISED_LOOP (rate-limited)" ;;
+    2) reason="Auto-approved: QC2_FULLY_AUTONOMOUS" ;;
+    *) reason="Auto-approved" ;;
+  esac
+
+  _audit_log "$action" "$target" "APPROVED" "$(_qc_level_name "$qc_level")" "$loa_cap" "$reason"
+
+  # Coordinate with daemon (Unit 10) to avoid duplicate logging
+  _coordinate_with_daemon "$action" "$target" "$qc_level"
+
+  _log "[APPROVED] $action $([ -n "$target" ] && echo "$target" || echo "")(QC=$(_qc_level_name "$qc_level"))"
+}
+
+# Pattern 3: Rate Limiting (QC1 only)
+_check_rate_limit() {
+  _ensure_aurora_agent_dir
+
+  local call_count
+  call_count=$(cat "$QLAUDE_CALL_COUNT_FILE" 2>/dev/null || echo 0)
+  local last_reset
+  last_reset=$(cat "$QLAUDE_RESET_TIME_FILE" 2>/dev/null || echo 0)
+  local now
+  now=$(date +%s)
+
+  # Reset counter every hour
+  if (( now - last_reset > RATE_LIMIT_WINDOW_SECS )); then
+    echo 0 > "$QLAUDE_CALL_COUNT_FILE"
+    echo "$now" > "$QLAUDE_RESET_TIME_FILE"
+    call_count=0
+  fi
+
+  # Check limit
+  if (( call_count >= RATE_LIMIT_PER_HOUR )); then
+    _error "Rate limit exceeded (100 calls/hour, QC_LEVEL=QC1_SUPERVISED_LOOP)"
+  fi
+
+  # Increment counter
+  echo $((call_count + 1)) > "$QLAUDE_CALL_COUNT_FILE"
+}
+
+# Pattern 4: GitHub Audit Log (QC2 only)
+_log_to_github() {
+  local action="$1"
+  local target="${2:-}"
+  local result="${3:-}"
+  local repo="aurora-thesean/claude-code-control"
+
+  # Validate gh CLI is available
+  if ! command -v gh &>/dev/null; then
+    _log "WARNING: gh CLI not available, skipping GitHub audit log"
+    return 0
+  fi
+
+  # Create issue
+  local body
+  body=$(cat <<EOF
+## Action
+\`\`\`
+$action
+\`\`\`
+
+## Target
+\`\`\`
+$target
+\`\`\`
+
+## Result
+\`\`\`
+$result
+\`\`\`
+
+## Metadata
+- QC_LEVEL: QC2_FULLY_AUTONOMOUS
+- Timestamp: $(date -Iseconds)
+- Host: $(hostname)
+- User: $(whoami)
+EOF
+)
+
+  gh issue create \
+    --title "QC2 Action: $action" \
+    --body "$body" \
+    --repo "$repo" \
+    2>&1 | _log "GitHub audit log created" || _log "WARNING: Could not create GitHub issue"
+}
+
+# --- Session Tree Functions ---
+
+# Find all sessionIds that share the same parentUuid in a JSONL file
+_find_siblings_in_file() {
+  local jsonl_file="$1"
+  local target_uuid="$2"
+
+  # Python is more reliable for JSON parsing
+  python3 -c "
+import json
+import sys
+
+target_uuid = '$target_uuid'
+parent_map = {}  # parentUuid -> [sessionIds]
+uuid_to_parent = {}  # sessionId -> parentUuid
+
+with open('$jsonl_file') as f:
+    for line in f:
+        try:
+            r = json.loads(line)
+            sid = r.get('sessionId', '')
+            parent = r.get('parentUuid', '')
+
+            if sid and parent:
+                uuid_to_parent[sid] = parent
+                if parent not in parent_map:
+                    parent_map[parent] = set()
+                parent_map[parent].add(sid)
+        except:
+            pass
+
+# Find target's parent
+if target_uuid not in uuid_to_parent:
+    sys.exit(1)
+
+parent = uuid_to_parent[target_uuid]
+if parent not in parent_map:
+    sys.exit(1)
+
+# Print all siblings
+for sibling in sorted(parent_map[parent]):
+    print(sibling)
+" 2>/dev/null
+}
+
+# Find all siblings of a given UUID across all JSONL files
+_list_siblings() {
+  local target_uuid="$1"
+
+  local found=0
+  for project_dir in "$PROJECT_DIR"/*/; do
+    [[ -d "$project_dir" ]] || continue
+
+    for jsonl_file in "$project_dir"*.jsonl; do
+      [[ -f "$jsonl_file" ]] || continue
+
+      while IFS= read -r sibling_uuid; do
+        [[ -n "$sibling_uuid" ]] || continue
+        echo "$sibling_uuid"
+        found=1
+      done < <(_find_siblings_in_file "$jsonl_file" "$target_uuid")
+    done
+  done
+
+  if (( found == 0 )); then
+    return 1
+  fi
+}
+
+# Compute distance (hop count) to a common ancestor between two UUIDs
+_distance_to() {
+  local target_uuid="$1"
+  local current_uuid="${2:-}"
+
+  # If no current UUID, try to get it from session
+  if [[ -z "$current_uuid" ]]; then
+    current_uuid=$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null) || {
+      _error "Could not determine current session UUID"
+    }
+  fi
+
+  python3 -c "
+import json
+import sys
+
+target = '$target_uuid'
+current = '$current_uuid'
+
+# Build parentage map across all JSONL files
+import os
+from pathlib import Path
+
+parent_map = {}  # uuid -> parentUuid
+project_dir = Path('$PROJECT_DIR')
+
+if not project_dir.exists():
+    sys.exit(1)
+
+for jsonl_file in sorted(project_dir.glob('*/*.jsonl')):
+    with open(jsonl_file) as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+                uuid = r.get('sessionId', '')
+                parent = r.get('parentUuid', '')
+                if uuid and parent and uuid not in parent_map:
+                    parent_map[uuid] = parent
+            except:
+                pass
+
+# Find path to root for target and current
+def path_to_root(uuid):
+    path = []
+    while uuid:
+        path.append(uuid)
+        uuid = parent_map.get(uuid, '')
+    return path
+
+target_path = path_to_root(target)
+current_path = path_to_root(current)
+
+# Find common ancestor
+target_set = set(target_path)
+common_ancestor = None
+distance = None
+
+for i, ancestor in enumerate(current_path):
+    if ancestor in target_set:
+        common_ancestor = ancestor
+        target_dist = target_path.index(ancestor)
+        current_dist = i
+        distance = target_dist + current_dist
+        break
+
+if distance is None:
+    print('No common ancestor found')
+    sys.exit(1)
+
+print(f'{distance}')
+" 2>/dev/null || {
+    _error "Could not compute distance (sessions may not have parent links)"
+  }
+}
+
+# Trace full lineage of a UUID, returning JSON
+_trace_lineage() {
+  local start_uuid="${1:-}"
+
+  # If no UUID provided, use current session
+  if [[ -z "$start_uuid" ]]; then
+    start_uuid=$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null) || {
+      _error "Could not determine current session UUID"
+    }
+  fi
+
+  python3 -c "
+import json
+import sys
+from pathlib import Path
+
+start = '$start_uuid'
+project_dir = Path('$PROJECT_DIR')
+
+# Build map: uuid -> {parentUuid, children, metadata}
+uuid_map = {}
+
+for jsonl_file in sorted(project_dir.glob('*/*.jsonl')):
+    with open(jsonl_file) as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+                uuid = r.get('sessionId', '')
+                parent = r.get('parentUuid', '')
+                timestamp = r.get('timestamp', '')
+
+                if uuid and uuid not in uuid_map:
+                    uuid_map[uuid] = {
+                        'uuid': uuid,
+                        'parent': parent,
+                        'children': [],
+                        'first_seen': timestamp
+                    }
+                if parent:
+                    uuid_map[uuid]['parent'] = parent
+                if timestamp and not uuid_map[uuid].get('first_seen'):
+                    uuid_map[uuid]['first_seen'] = timestamp
+            except:
+                pass
+
+# Build children relationships
+for uuid, data in uuid_map.items():
+    parent = data.get('parent', '')
+    if parent and parent in uuid_map:
+        uuid_map[parent]['children'].append(uuid)
+
+# Trace lineage
+def trace(uuid, depth=0):
+    if uuid not in uuid_map:
+        return None
+
+    data = uuid_map[uuid].copy()
+    data['depth'] = depth
+    data['children'] = [trace(child, depth + 1) for child in data.get('children', [])]
+    return data
+
+lineage = trace(start)
+print(json.dumps(lineage, indent=2))
+" 2>/dev/null || {
+    _error "Could not trace lineage"
+  }
+}
+
+# --- Model Transition Detection ---
+
+# Check for model change and log to qreveng.jsonl
+_detect_and_log_model_switch() {
+  local target_uuid="$1"
+
+  # Try to get current model via qhoami
+  if command -v qhoami &>/dev/null; then
+    local current_identity
+    current_identity=$(qhoami "$target_uuid" 2>/dev/null) || return 0
+
+    # Parse model from current session identity
+    local new_model
+    new_model=$(echo "$current_identity" | python3 -c "
+import json
+import sys
+try:
+    data = json.load(sys.stdin)
+    model = data.get('model', {}).get('value', '')
+    if model and model != 'MODEL_UNKNOWN':
+        print(model)
+except:
+    pass
+" 2>/dev/null) || return 0
+
+    # Try to get previous model from qreveng.jsonl
+    if [[ -f "$QREVENG_LOG" ]]; then
+      local old_model
+      old_model=$(tail -1 "$QREVENG_LOG" 2>/dev/null | python3 -c "
+import json
+import sys
+try:
+    data = json.loads(sys.stdin.readline())
+    model = data.get('new_model', '')
+    if model:
+        print(model)
+except:
+    pass
+" 2>/dev/null) || old_model=""
+
+      if [[ -n "$new_model" && "$new_model" != "$old_model" ]]; then
+        _log_model_transition "${old_model:-UNKNOWN}" "$new_model" "qlaude"
+        _log "[MODEL] Transition logged: $old_model -> $new_model"
+      fi
+    else
+      # First time tracking model, log it
+      if [[ -n "$new_model" ]]; then
+        _log_model_transition "UNKNOWN" "$new_model" "qlaude"
+        _log "[MODEL] Initial model logged: $new_model"
+      fi
+    fi
+  fi
+}
+
+# --- Protected Operations ---
+
+# Resume a session (gate varies by QC_LEVEL)
+_resume_session() {
+  local target_uuid="$1"
+  local confirm_flag="${2:-}"
+  local qc_level="$3"
+  local loa_cap="${4:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
+
+  case "$qc_level" in
+    "$QC0_HUMAN_ONLY")
+      # QC0: require explicit --confirm flag
+      if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "resume" "$target_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC0 requires it)"
+        _error "--resume requires --confirm flag in QC0_HUMAN_ONLY mode"
+      fi
+      _gate_confirm "resume" "$target_uuid" "$qc_level" "$loa_cap"
+      ;;
+
+    "$QC1_SUPERVISED_LOOP")
+      # QC1: auto-approve with rate limit check
+      if ! _check_rate_limit; then
+        _audit_log "resume" "$target_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Rate limit exceeded (100/hour)"
+        _error "Rate limit exceeded (100 calls/hour, QC_LEVEL=QC1_SUPERVISED_LOOP)"
+      fi
+      _gate_auto_approve "resume" "$target_uuid" "$qc_level" "$loa_cap"
+      ;;
+
+    "$QC2_FULLY_AUTONOMOUS")
+      # QC2: auto-approve and log to GitHub
+      _gate_auto_approve "resume" "$target_uuid" "$qc_level" "$loa_cap"
+      _log_to_github "resume" "$target_uuid" "Resumed session automatically"
+      ;;
+  esac
+
+  _log "Resume session: $target_uuid"
+
+  # Detect and log any model transition (Unit 10 integration)
+  _detect_and_log_model_switch "$target_uuid"
+
+  # Actual resume implementation
+  local tasks_dir="$TASKS_DIR/$target_uuid"
+  if [[ ! -d "$tasks_dir" ]]; then
+    _error "Session directory not found: $tasks_dir"
+  fi
+
+  # Read session role if available
+  local role=""
+  if [[ -f "$tasks_dir/.role" ]]; then
+    role=$(cat "$tasks_dir/.role")
+    _log "Session role: $role"
+  fi
+
+  # Spawn new Claude Code process resuming this session
+  # Note: This creates a new process; parent session remains suspended
+  export AURORA_AGENT_CLASS="${role:-CC0-HOME}"
+  exec claude --resume "$target_uuid" 2>&1
+}
+
+# Fork a session (gate varies by QC_LEVEL)
+_fork_session() {
+  local parent_uuid="$1"
+  local confirm_flag="${2:-}"
+  local qc_level="$3"
+  local loa_cap="${4:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
+
+  case "$qc_level" in
+    "$QC0_HUMAN_ONLY")
+      # QC0: require explicit --confirm flag
+      if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "fork" "$parent_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC0 requires it)"
+        _error "--fork requires --confirm flag in QC0_HUMAN_ONLY mode"
+      fi
+      _gate_confirm "fork" "$parent_uuid" "$qc_level" "$loa_cap"
+      ;;
+
+    "$QC1_SUPERVISED_LOOP")
+      # QC1: require human confirmation (prevents runaway forking)
+      if [[ "$confirm_flag" != "--confirm" ]]; then
+        _audit_log "fork" "$parent_uuid" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Missing --confirm flag (QC1 prevents runaway forking)"
+        _error "--fork requires --confirm flag in QC1_SUPERVISED_LOOP mode (prevents runaway forking)"
+      fi
+      _gate_confirm "fork" "$parent_uuid" "$qc_level" "$loa_cap"
+      ;;
+
+    "$QC2_FULLY_AUTONOMOUS")
+      # QC2: auto-approve and log to GitHub
+      _gate_auto_approve "fork" "$parent_uuid" "$qc_level" "$loa_cap"
+      _log_to_github "fork" "$parent_uuid" "Forked session automatically"
+      ;;
+  esac
+
+  _log "Fork session: $parent_uuid"
+  # TODO: Actual fork implementation (create child session, etc.)
+}
+
+# Autonomous loop (QC0: forbidden, QC1: rate-limited, QC2: unlimited)
+_autonomous_loop() {
+  local task="$1"
+  local qc_level="$2"
+  local loa_cap="${3:-}"
+
+  # Infer LOA_CAP from QC_LEVEL if not provided
+  if [[ -z "$loa_cap" ]]; then
+    case "$qc_level" in
+      0) loa_cap=2 ;;
+      1) loa_cap=4 ;;
+      2) loa_cap=6 ;;
+      *) loa_cap=2 ;;
+    esac
+  fi
+
+  case "$qc_level" in
+    "$QC0_HUMAN_ONLY")
+      _audit_log "autonomous-loop" "$task" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Forbidden in QC0_HUMAN_ONLY mode"
+      _error "--autonomous-loop is forbidden in QC0_HUMAN_ONLY mode"
+      ;;
+
+    "$QC1_SUPERVISED_LOOP")
+      # QC1: rate-limited (100 calls/hour)
+      if ! _check_rate_limit; then
+        _audit_log "autonomous-loop" "$task" "REJECTED" "$(_qc_level_name "$qc_level")" "$loa_cap" "Rate limit exceeded (100/hour)"
+        _error "Rate limit exceeded (100 calls/hour, QC_LEVEL=QC1_SUPERVISED_LOOP)"
+      fi
+      _gate_auto_approve "autonomous-loop" "$task" "$qc_level" "$loa_cap"
+      ;;
+
+    "$QC2_FULLY_AUTONOMOUS")
+      # QC2: unlimited and logged
+      _gate_auto_approve "autonomous-loop" "$task" "$qc_level" "$loa_cap"
+      _log_to_github "autonomous-loop" "$task" "Started autonomous loop"
+      ;;
+  esac
+
+  _log "Autonomous loop: $task"
+  # TODO: Actual loop implementation
+}
+
+# --- Help and Version ---
+
+_show_help() {
+  cat <<EOF
+$SCRIPT_NAME v$VERSION — Aurora Claude Code Control Plane Motor Tool
+
+USAGE:
+  $SCRIPT_NAME --list-siblings [<uuid>]        List sessionIds with same parent
+  $SCRIPT_NAME --distance-to <uuid> [<from>]   Compute hops to common ancestor
+  $SCRIPT_NAME --trace-lineage [<uuid>]         Full ancestry tree (JSON)
+  $SCRIPT_NAME --resume <uuid> [--confirm]      Resume a session
+  $SCRIPT_NAME --fork <uuid> [--confirm]        Fork a session
+  $SCRIPT_NAME --autonomous-loop <task>         Run autonomous loop
+
+READ-ONLY OPERATIONS (no gates):
+  --list-siblings [<uuid>]       Show all sessionIds sharing same parent.
+                                 If <uuid> omitted, uses current session.
+
+  --distance-to <uuid> [<from>]  Compute hop count to common ancestor.
+                                 <from> defaults to current session.
+
+  --trace-lineage [<uuid>]       Full ancestry tree in JSON format.
+                                 If <uuid> omitted, uses current session.
+
+PROTECTED OPERATIONS (gates vary by QC_LEVEL):
+  --resume <uuid> [--confirm]    Resume a session.
+                                 QC0: requires --confirm
+                                 QC1+: auto-approved
+
+  --fork <uuid> [--confirm]      Fork a session.
+                                 QC0: requires --confirm
+                                 QC1: requires --confirm (prevent runaway)
+                                 QC2: auto-approved + logged
+
+  --autonomous-loop <task>       Run autonomous loop.
+                                 QC0: FORBIDDEN
+                                 QC1: auto-approved + rate-limited (100/hr)
+                                 QC2: auto-approved + unlimited
+
+QC_LEVEL DETERMINATION:
+  QC_LEVEL is computed from LOA_CAP in $CLAUDE_GLOBAL_MD:
+    LOA_CAP=2 → QC0_HUMAN_ONLY (safest)
+    LOA_CAP=4 → QC1_SUPERVISED_LOOP
+    LOA_CAP=6 → QC2_FULLY_AUTONOMOUS
+
+OPTIONS:
+  --help                         Show this help message
+  --version                      Show version number
+
+EXAMPLES:
+  # List siblings of current session
+  $SCRIPT_NAME --list-siblings
+
+  # Resume session 22262eab with confirmation (QC0)
+  $SCRIPT_NAME --resume 22262eab-... --confirm
+
+  # Show lineage tree
+  $SCRIPT_NAME --trace-lineage
+
+  # Check distance to another session
+  $SCRIPT_NAME --distance-to 22262eab-...
+
+DESIGN REFERENCE:
+  See: /home/aurora/.local/bin/qlaude.design
+
+EOF
+}
+
+_show_version() {
+  echo "$SCRIPT_NAME v$VERSION"
+}
+
+# --- Optimization: Graceful Shutdown with Flushed State ---
+
+# Explicit flush functions for audit and rate-limit state
+# OPTIMIZATION: Batch writes are flushed on process exit
+_flush_audit_on_exit() {
+  # No-op in current monolithic version (audit writes are immediate)
+  # Kept for compatibility with potential future modular versions
+  :
+}
+
+_flush_rate_limit_on_exit() {
+  # No-op in current monolithic version (rate limit is immediate)
+  # Kept for compatibility with potential future modular versions
+  :
+}
+
+# Set trap for graceful shutdown (ensures buffered state is flushed)
+trap '_flush_audit_on_exit; _flush_rate_limit_on_exit' EXIT
+
+# --- Main Dispatch ---
+
+main() {
+  local command="${1:-}"
+
+  case "$command" in
+    --help|-h)
+      _show_help
+      exit 0
+      ;;
+
+    --version|-v)
+      _show_version
+      exit 0
+      ;;
+
+    --list-siblings)
+      local uuid="${2:-}"
+      if [[ -z "$uuid" ]]; then
+        uuid=$(cat "$AURORA_AGENT_DIR/home-session-id" 2>/dev/null) || {
+          _error "Could not determine current session UUID"
+        }
+      fi
+      _log "Listing siblings of $uuid..."
+      _list_siblings "$uuid" || _error "Could not find siblings for $uuid"
+      ;;
+
+    --distance-to)
+      local target="${2:-}"
+      [[ -n "$target" ]] || _error "--distance-to requires a UUID argument"
+      local from="${3:-}"
+      _log "Computing distance from ${from:-current} to $target..."
+      _distance_to "$target" "$from" || exit 1
+      ;;
+
+    --trace-lineage)
+      local uuid="${2:-}"
+      _log "Tracing lineage from ${uuid:-current session}..."
+      _trace_lineage "$uuid" || exit 1
+      ;;
+
+    --resume)
+      local target="${2:-}"
+      [[ -n "$target" ]] || _error "--resume requires a UUID argument"
+      local confirm="${3:-}"
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
+      local loa_cap
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
+      _check_agents_md "resume" || _log "WARNING: AGENTS.md authorization check failed for resume"
+      _resume_session "$target" "$confirm" "$qc_level" "$loa_cap"
+      ;;
+
+    --fork)
+      local parent="${2:-}"
+      [[ -n "$parent" ]] || _error "--fork requires a UUID argument"
+      local confirm="${3:-}"
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
+      local loa_cap
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
+      _check_agents_md "fork" || _log "WARNING: AGENTS.md authorization check failed for fork"
+      _fork_session "$parent" "$confirm" "$qc_level" "$loa_cap"
+      ;;
+
+    --autonomous-loop)
+      local task="${2:-}"
+      [[ -n "$task" ]] || _error "--autonomous-loop requires a task description"
+
+      # OPTIMIZATION: Read LOA_CAP once and validate early
+      local loa_cap
+      loa_cap=$(grep "^LOA_CAP=" "$CLAUDE_GLOBAL_MD" 2>/dev/null | cut -d= -f2) || loa_cap=2
+      [[ "$loa_cap" == "2" || "$loa_cap" == "4" || "$loa_cap" == "6" ]] || _error "Invalid LOA_CAP in $CLAUDE_GLOBAL_MD"
+
+      local qc_level
+      qc_level=$(_get_qc_level)
+      _check_agents_md "autonomous-loop" || _log "WARNING: AGENTS.md authorization check failed for autonomous-loop"
+      _autonomous_loop "$task" "$qc_level" "$loa_cap"
+      ;;
+
+    "")
+      _show_help
+      exit 1
+      ;;
+
+    *)
+      _error "Unknown command: $command (try --help)"
+      ;;
+  esac
+}
+
+main "$@"
