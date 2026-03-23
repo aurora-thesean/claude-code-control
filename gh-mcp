@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""
+gh-mcp: MCP server wrapping the gh CLI for zero-PAT GitHub access.
+
+Uses the existing `gh auth` OAuth session — no tokens stored, read, or
+exposed in Claude's context. Token never appears in conversation history.
+
+Install: add to ~/.claude/settings.json mcpServers (see README)
+Requires: gh CLI authenticated via `gh auth login`
+"""
+import json
+import subprocess
+import sys
+import shutil
+import logging
+
+logging.basicConfig(filename='/tmp/gh-mcp.log', level=logging.DEBUG,
+                    format='%(asctime)s %(levelname)s %(message)s')
+log = logging.getLogger('gh-mcp')
+
+
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
+TOOLS = [
+    {
+        "name": "issue_list",
+        "description": "List issues in a GitHub repo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":  {"type": "string", "description": "owner/repo (e.g. aurora-thesean/claude-code-control)"},
+                "state": {"type": "string", "enum": ["open", "closed", "all"], "default": "open"},
+                "limit": {"type": "integer", "default": 20},
+                "label": {"type": "string", "description": "Filter by label"},
+                "assignee": {"type": "string", "description": "Filter by assignee login"}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "issue_view",
+        "description": "View a single issue including comments",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":   {"type": "string"},
+                "number": {"type": "integer", "description": "Issue number"}
+            },
+            "required": ["repo", "number"]
+        }
+    },
+    {
+        "name": "issue_create",
+        "description": "Create a GitHub issue",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":      {"type": "string"},
+                "title":     {"type": "string"},
+                "body":      {"type": "string"},
+                "labels":    {"type": "array", "items": {"type": "string"}},
+                "assignees": {"type": "array", "items": {"type": "string"}},
+                "milestone": {"type": "string"}
+            },
+            "required": ["repo", "title"]
+        }
+    },
+    {
+        "name": "issue_comment",
+        "description": "Add a comment to an issue or PR",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":   {"type": "string"},
+                "number": {"type": "integer"},
+                "body":   {"type": "string"}
+            },
+            "required": ["repo", "number", "body"]
+        }
+    },
+    {
+        "name": "issue_edit",
+        "description": "Edit an issue (title, body, state, labels, assignees)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":      {"type": "string"},
+                "number":    {"type": "integer"},
+                "title":     {"type": "string"},
+                "body":      {"type": "string"},
+                "state":     {"type": "string", "enum": ["open", "closed"]},
+                "labels":    {"type": "array", "items": {"type": "string"}},
+                "assignees": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["repo", "number"]
+        }
+    },
+    {
+        "name": "pr_list",
+        "description": "List pull requests in a GitHub repo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":  {"type": "string"},
+                "state": {"type": "string", "enum": ["open", "closed", "merged", "all"], "default": "open"},
+                "limit": {"type": "integer", "default": 20}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "pr_create",
+        "description": "Create a pull request",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":  {"type": "string"},
+                "title": {"type": "string"},
+                "body":  {"type": "string"},
+                "head":  {"type": "string", "description": "Source branch"},
+                "base":  {"type": "string", "description": "Target branch (default: main)"},
+                "draft": {"type": "boolean", "default": False},
+                "labels":    {"type": "array", "items": {"type": "string"}},
+                "assignees": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["repo", "title", "head"]
+        }
+    },
+    {
+        "name": "pr_view",
+        "description": "View a pull request",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":   {"type": "string"},
+                "number": {"type": "integer"}
+            },
+            "required": ["repo", "number"]
+        }
+    },
+    {
+        "name": "pr_merge",
+        "description": "Merge a pull request",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":   {"type": "string"},
+                "number": {"type": "integer"},
+                "method": {"type": "string", "enum": ["merge", "squash", "rebase"], "default": "merge"},
+                "delete_branch": {"type": "boolean", "default": False}
+            },
+            "required": ["repo", "number"]
+        }
+    },
+    {
+        "name": "label_list",
+        "description": "List labels in a repo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string"}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "label_create",
+        "description": "Create a label in a repo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":        {"type": "string"},
+                "name":        {"type": "string"},
+                "color":       {"type": "string", "description": "Hex color without #"},
+                "description": {"type": "string"}
+            },
+            "required": ["repo", "name", "color"]
+        }
+    },
+    {
+        "name": "milestone_list",
+        "description": "List milestones in a repo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo":  {"type": "string"},
+                "state": {"type": "string", "enum": ["open", "closed", "all"], "default": "open"}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "gh_run",
+        "description": "Run an arbitrary gh CLI command (escape hatch for anything not covered above). Returns stdout+stderr.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "gh subcommand and args, e.g. ['repo', 'list', '--limit', '5']"
+                }
+            },
+            "required": ["args"]
+        }
+    }
+]
+
+
+# ---------------------------------------------------------------------------
+# gh command execution
+# ---------------------------------------------------------------------------
+
+def run_gh(*args, input_text=None):
+    """Run a gh command, return (stdout, stderr, returncode)."""
+    gh_path = shutil.which('gh')
+    if not gh_path:
+        return '', 'gh CLI not found. Install from https://cli.github.com and run: gh auth login', 1
+
+    cmd = [gh_path] + list(args)
+    log.debug('running: %s', ' '.join(cmd))
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        input=input_text
+    )
+    log.debug('exit=%d stdout=%r stderr=%r', result.returncode, result.stdout[:200], result.stderr[:200])
+    return result.stdout, result.stderr, result.returncode
+
+
+def gh_result(stdout, stderr, returncode):
+    """Format gh output as MCP tool result content."""
+    if returncode != 0:
+        return [{"type": "text", "text": f"ERROR (exit {returncode}):\n{stderr.strip() or stdout.strip()}"}]
+    return [{"type": "text", "text": stdout.strip() or "(no output)"}]
+
+
+# ---------------------------------------------------------------------------
+# Tool dispatch
+# ---------------------------------------------------------------------------
+
+def call_tool(name, args):
+    repo = args.get('repo', '')
+
+    if name == 'issue_list':
+        cmd = ['issue', 'list', '-R', repo,
+               '--state', args.get('state', 'open'),
+               '--limit', str(args.get('limit', 20)),
+               '--json', 'number,title,state,labels,assignees,createdAt,url']
+        if args.get('label'):
+            cmd += ['--label', args['label']]
+        if args.get('assignee'):
+            cmd += ['--assignee', args['assignee']]
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'issue_view':
+        return gh_result(*run_gh(
+            'issue', 'view', str(args['number']),
+            '-R', repo,
+            '--json', 'number,title,body,state,labels,assignees,comments,url'
+        ))
+
+    elif name == 'issue_create':
+        cmd = ['issue', 'create', '-R', repo,
+               '--title', args['title']]
+        if args.get('body'):
+            cmd += ['--body', args['body']]
+        for label in args.get('labels', []):
+            cmd += ['--label', label]
+        for assignee in args.get('assignees', []):
+            cmd += ['--assignee', assignee]
+        if args.get('milestone'):
+            cmd += ['--milestone', args['milestone']]
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'issue_comment':
+        return gh_result(*run_gh(
+            'issue', 'comment', str(args['number']),
+            '-R', repo,
+            '--body', args['body']
+        ))
+
+    elif name == 'issue_edit':
+        cmd = ['issue', 'edit', str(args['number']), '-R', repo]
+        if args.get('title'):   cmd += ['--title', args['title']]
+        if args.get('body'):    cmd += ['--body', args['body']]
+        if args.get('state'):   cmd += ['--state', args['state']]
+        for label in args.get('labels', []):
+            cmd += ['--add-label', label]
+        for assignee in args.get('assignees', []):
+            cmd += ['--add-assignee', assignee]
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'pr_list':
+        return gh_result(*run_gh(
+            'pr', 'list', '-R', repo,
+            '--state', args.get('state', 'open'),
+            '--limit', str(args.get('limit', 20)),
+            '--json', 'number,title,state,headRefName,baseRefName,author,url'
+        ))
+
+    elif name == 'pr_create':
+        cmd = ['pr', 'create', '-R', repo,
+               '--title', args['title'],
+               '--head', args['head'],
+               '--base', args.get('base', 'main')]
+        if args.get('body'):  cmd += ['--body', args['body']]
+        if args.get('draft'): cmd += ['--draft']
+        for label in args.get('labels', []):
+            cmd += ['--label', label]
+        for assignee in args.get('assignees', []):
+            cmd += ['--assignee', assignee]
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'pr_view':
+        return gh_result(*run_gh(
+            'pr', 'view', str(args['number']),
+            '-R', repo,
+            '--json', 'number,title,body,state,headRefName,baseRefName,author,labels,url'
+        ))
+
+    elif name == 'pr_merge':
+        method_flag = {'merge': '--merge', 'squash': '--squash', 'rebase': '--rebase'}
+        cmd = ['pr', 'merge', str(args['number']), '-R', repo,
+               method_flag.get(args.get('method', 'merge'), '--merge')]
+        if args.get('delete_branch'):
+            cmd += ['--delete-branch']
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'label_list':
+        return gh_result(*run_gh(
+            'label', 'list', '-R', repo,
+            '--json', 'name,color,description'
+        ))
+
+    elif name == 'label_create':
+        cmd = ['label', 'create', args['name'], '-R', repo,
+               '--color', args['color']]
+        if args.get('description'):
+            cmd += ['--description', args['description']]
+        return gh_result(*run_gh(*cmd))
+
+    elif name == 'milestone_list':
+        return gh_result(*run_gh(
+            'api', f'repos/{repo}/milestones',
+            '--jq', '[.[] | {number, title, state, due_on, open_issues, closed_issues}]'
+        ))
+
+    elif name == 'gh_run':
+        return gh_result(*run_gh(*args['args']))
+
+    else:
+        return [{"type": "text", "text": f"Unknown tool: {name}"}]
+
+
+# ---------------------------------------------------------------------------
+# MCP stdio protocol (JSON-RPC 2.0, newline-delimited)
+# ---------------------------------------------------------------------------
+
+def send(obj):
+    line = json.dumps(obj)
+    log.debug('send: %s', line[:300])
+    sys.stdout.write(line + '\n')
+    sys.stdout.flush()
+
+
+def handle(msg):
+    method = msg.get('method', '')
+    msg_id = msg.get('id')
+
+    if method == 'initialize':
+        send({
+            "jsonrpc": "2.0", "id": msg_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "gh-mcp", "version": "1.0.0"}
+            }
+        })
+
+    elif method == 'initialized':
+        pass  # notification, no response
+
+    elif method == 'tools/list':
+        send({
+            "jsonrpc": "2.0", "id": msg_id,
+            "result": {"tools": TOOLS}
+        })
+
+    elif method == 'tools/call':
+        params = msg.get('params', {})
+        tool_name = params.get('name', '')
+        tool_args = params.get('arguments', {})
+        log.info('tool call: %s %s', tool_name, tool_args)
+        content = call_tool(tool_name, tool_args)
+        send({
+            "jsonrpc": "2.0", "id": msg_id,
+            "result": {"content": content, "isError": content[0]["text"].startswith("ERROR")}
+        })
+
+    elif method == 'ping':
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+
+    else:
+        if msg_id is not None:
+            send({
+                "jsonrpc": "2.0", "id": msg_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"}
+            })
+
+
+def main():
+    log.info('gh-mcp starting')
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+            log.debug('recv: %s', line[:300])
+            handle(msg)
+        except json.JSONDecodeError as e:
+            log.error('bad JSON: %s', e)
+        except Exception as e:
+            log.exception('unhandled error')
+
+
+if __name__ == '__main__':
+    main()
