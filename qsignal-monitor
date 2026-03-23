@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# qsignal-monitor — Signal Handler Monitor (Unit 8)
+#
+# Reads signal disposition tables from /proc/{PID}/status and /proc/{PID}/stat.
+# Decodes signal bitmasks to named signals. Emits JSON sensor output.
+# No LD_PRELOAD, no ptrace — pure /proc filesystem introspection.
+#
+# Design principle: Signal handler state is observable via /proc without
+# privilege escalation. Bitmasks map to POSIX signal names.
+#
+# Usage:
+#   qsignal-monitor                  # Monitor claude's own process
+#   qsignal-monitor <PID>            # Monitor specific PID
+#   qsignal-monitor --all            # All claude processes
+#   qsignal-monitor --watch <PID>    # Watch for signal changes (1s interval)
+#
+# Output: JSON with signal dispositions and pending signals
+# Exit codes: 0=success, 1=error, 2=usage error
+
+set -euo pipefail
+
+readonly SCRIPT_NAME="qsignal-monitor"
+readonly VERSION="0.1.0"
+readonly UNIT="8"
+
+# ─── SIGNAL NAME TABLE ─────────────────────────────────────
+
+# POSIX signal names indexed by signal number (1-64)
+declare -a SIGNAL_NAMES=(
+  "" "SIGHUP" "SIGINT" "SIGQUIT" "SIGILL" "SIGTRAP"
+  "SIGABRT" "SIGBUS" "SIGFPE" "SIGKILL" "SIGUSR1"
+  "SIGSEGV" "SIGUSR2" "SIGPIPE" "SIGALRM" "SIGTERM"
+  "SIGSTKFLT" "SIGCHLD" "SIGCONT" "SIGSTOP" "SIGTSTP"
+  "SIGTTIN" "SIGTTOU" "SIGURG" "SIGXCPU" "SIGXFSZ"
+  "SIGVTALRM" "SIGPROF" "SIGWINCH" "SIGIO" "SIGPWR"
+  "SIGSYS" "" "" "SIGRTMIN" "SIGRTMIN+1"
+  "SIGRTMIN+2" "SIGRTMIN+3" "SIGRTMIN+4" "SIGRTMIN+5" "SIGRTMIN+6"
+  "SIGRTMIN+7" "SIGRTMIN+8" "SIGRTMIN+9" "SIGRTMIN+10" "SIGRTMIN+11"
+  "SIGRTMIN+12" "SIGRTMIN+13" "SIGRTMIN+14" "SIGRTMIN+15" "SIGRTMAX-14"
+  "SIGRTMAX-13" "SIGRTMAX-12" "SIGRTMAX-11" "SIGRTMAX-10" "SIGRTMAX-9"
+  "SIGRTMAX-8" "SIGRTMAX-7" "SIGRTMAX-6" "SIGRTMAX-5" "SIGRTMAX-4"
+  "SIGRTMAX-3" "SIGRTMAX-2" "SIGRTMAX-1" "SIGRTMAX"
+)
+
+# ─── UTILITY FUNCTIONS ─────────────────────────────────────
+
+err() { echo "ERROR: $*" >&2; exit 1; }
+
+# Decode a hex signal bitmask to array of signal names
+decode_sigmask() {
+  local hex_mask="$1"
+  local -a active_signals=()
+  
+  # Convert hex to decimal (handle 64-bit masks via two 32-bit halves)
+  local high_hex="${hex_mask:0:8}"
+  local low_hex="${hex_mask:8:8}"
+  local high_dec=$((16#${high_hex}))
+  local low_dec=$((16#${low_hex}))
+  
+  # Check bits 1-32 (low half)
+  for ((bit=1; bit<=32; bit++)); do
+    local mask=$(( 1 << (bit-1) ))
+    if (( (low_dec & mask) != 0 )); then
+      local sig_name="${SIGNAL_NAMES[$bit]:-SIG${bit}}"
+      [[ -n "$sig_name" ]] && active_signals+=("\"${sig_name}\"")
+    fi
+  done
+  
+  # Check bits 33-64 (high half)
+  for ((bit=33; bit<=64; bit++)); do
+    local mask=$(( 1 << (bit-33) ))
+    if (( (high_dec & mask) != 0 )); then
+      local sig_name="${SIGNAL_NAMES[$bit]:-SIGRT$((bit-34))}"
+      [[ -n "$sig_name" ]] && active_signals+=("\"${sig_name}\"")
+    fi
+  done
+  
+  printf '%s' "$(IFS=','; echo "${active_signals[*]}")"
+}
+
+# Read signal state from /proc/{PID}/status
+read_signal_state() {
+  local pid="$1"
+  local proc_status="/proc/${pid}/status"
+  
+  [[ -r "$proc_status" ]] || err "Cannot read /proc/${pid}/status — process not found or no permission"
+  
+  # Extract signal masks
+  local sig_pnd sig_blk sig_ign sig_cgt
+  sig_pnd=$(grep "^SigPnd:" "$proc_status" | awk '{print $2}')
+  sig_blk=$(grep "^SigBlk:" "$proc_status" | awk '{print $2}')
+  sig_ign=$(grep "^SigIgn:" "$proc_status" | awk '{print $2}')
+  sig_cgt=$(grep "^SigCgt:" "$proc_status" | awk '{print $2}')
+  
+  # Process name and state
+  local proc_name proc_state vmrss
+  proc_name=$(grep "^Name:" "$proc_status" | awk '{print $2}')
+  proc_state=$(grep "^State:" "$proc_status" | awk '{print $2, $3}')
+  vmrss=$(grep "^VmRSS:" "$proc_status" | awk '{print $2, $3}' || echo "N/A")
+  
+  # Decode masks to signal names
+  local pending_signals blocked_signals ignored_signals caught_signals
+  pending_signals=$(decode_sigmask "$sig_pnd")
+  blocked_signals=$(decode_sigmask "$sig_blk")
+  ignored_signals=$(decode_sigmask "$sig_ign")
+  caught_signals=$(decode_sigmask "$sig_cgt")
+  
+  # Emit JSON
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  
+  cat <<EOF
+{
+  "type": "sensor",
+  "timestamp": "${timestamp}",
+  "unit": "${UNIT}",
+  "sensor": "qsignal-monitor",
+  "data": {
+    "pid": ${pid},
+    "process_name": "${proc_name}",
+    "process_state": "${proc_state}",
+    "memory_rss": "${vmrss}",
+    "signal_masks": {
+      "pending": {
+        "hex": "${sig_pnd}",
+        "signals": [${pending_signals}]
+      },
+      "blocked": {
+        "hex": "${sig_blk}",
+        "signals": [${blocked_signals}]
+      },
+      "ignored": {
+        "hex": "${sig_ign}",
+        "signals": [${ignored_signals}]
+      },
+      "caught": {
+        "hex": "${sig_cgt}",
+        "signals": [${caught_signals}]
+      }
+    }
+  },
+  "source": "proc_status",
+  "error": null
+}
+EOF
+}
+
+# Find Claude Code PIDs
+find_claude_pids() {
+  pgrep -x "claude" 2>/dev/null || \
+  pgrep -f "claude-code" 2>/dev/null || \
+  pgrep -f "node.*claude" 2>/dev/null || \
+  echo ""
+}
+
+# Find own PID (the claude process monitoring us)
+find_self_pid() {
+  # Walk up process tree from current shell to find claude parent
+  local pid=$$
+  while [[ "$pid" -gt 1 ]]; do
+    local cmdline=""
+    cmdline=$(tr -d '\0' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+    if [[ "$cmdline" == *"claude"* ]]; then
+      echo "$pid"
+      return 0
+    fi
+    pid=$(awk '{print $4}' "/proc/${pid}/stat" 2>/dev/null || echo 1)
+  done
+  echo "$$"
+}
+
+# ─── MAIN ─────────────────────────────────────────────────
+
+main() {
+  local mode="${1:-self}"
+  local target_pid=""
+  
+  case "$mode" in
+    --help|-h)
+      grep '^#' "$0" | head -20 | sed 's/^# *//'
+      exit 0
+      ;;
+    --all)
+      local pids
+      pids=$(find_claude_pids)
+      if [[ -z "$pids" ]]; then
+        echo '{"error": "No claude processes found", "unit": "8"}' >&2
+        exit 1
+      fi
+      echo "["
+      local first=true
+      while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        [[ "$first" == "false" ]] && echo ","
+        read_signal_state "$pid" || true
+        first=false
+      done <<< "$pids"
+      echo "]"
+      ;;
+    --watch)
+      target_pid="${2:-$(find_self_pid)}"
+      while true; do
+        read_signal_state "$target_pid"
+        sleep 1
+      done
+      ;;
+    --self|self)
+      target_pid=$(find_self_pid)
+      read_signal_state "$target_pid"
+      ;;
+    [0-9]*)
+      read_signal_state "$mode"
+      ;;
+    *)
+      echo "Usage: $SCRIPT_NAME [self|<PID>|--all|--watch <PID>]" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
